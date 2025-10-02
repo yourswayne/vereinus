@@ -4,7 +4,7 @@
     "slug": "Vereinus",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/vereinus_logo_transparent1.png",
     "scheme": "vereinus",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
