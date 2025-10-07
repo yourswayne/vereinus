@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet } from 'react-native';
 
-export default function Tab() {
+export default function Calender() {
   return (
     <View style={styles.container}>
       <Text>Hier kommt das Kalender</Text>

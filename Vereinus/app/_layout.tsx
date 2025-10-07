@@ -1,4 +1,3 @@
-import { Stack } from "expo-router";
 import { NativeTabs, Icon, Label } from 'expo-router/unstable-native-tabs';
 
 export default function RootLayout() {
@@ -7,7 +6,7 @@ export default function RootLayout() {
    <NativeTabs>
         <NativeTabs.Trigger name="news">
         <Icon sf="bell.fill" />
-        <Label>Neuigkeiten</Label>
+        <Label >Neuigkeiten</Label>
       </NativeTabs.Trigger>
     <NativeTabs.Trigger name="calender">
         <Icon sf="calendar" />
@@ -27,4 +26,6 @@ export default function RootLayout() {
       </NativeTabs.Trigger>
     </NativeTabs>
   );
+
+
 }
