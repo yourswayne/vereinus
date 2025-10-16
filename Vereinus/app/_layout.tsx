@@ -1,8 +1,9 @@
 import { NativeTabs, Icon, Label } from 'expo-router/unstable-native-tabs';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
   return (
-
+   <SafeAreaProvider>
    <NativeTabs>
         <NativeTabs.Trigger name="news">
         <Icon sf="bell.fill" />
@@ -25,6 +26,7 @@ export default function RootLayout() {
         <Label>Einstellung</Label>
       </NativeTabs.Trigger>
     </NativeTabs>
+   </SafeAreaProvider>
   );
 
 
