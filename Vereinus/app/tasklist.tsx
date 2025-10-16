@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TextInput,
+  Image,
   TouchableOpacity,
   FlatList,
   Alert,
@@ -11,9 +12,13 @@ import {
   Modal,
   Pressable,
   useColorScheme,
+  ScrollView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 
 // --- Types ---
 type Priority = 'low' | 'medium' | 'high';
@@ -22,10 +27,11 @@ type BaseTask = {
   id: string;
   title: string;
   description?: string;
-  priority: Priority;
+  priority?: Priority;
   startAt?: string; // "YYYY-MM-DD HH:mm"
   endAt?: string; // "YYYY-MM-DD HH:mm"
   done?: boolean;
+  createdAt?: string; // added: creation timestamp
 };
 
 type Task = BaseTask & { subtasks: BaseTask[] };
@@ -65,6 +71,7 @@ const durationLabel = (mins?: number) => {
 // Date helpers
 const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
 const toDateString = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const toDateStringDE = (d: Date) => `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 const toTimeString = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const toDateTimeString = (d: Date) => `${toDateString(d)} ${toTimeString(d)}`;
 const parseDateTime = (s?: string) => {
@@ -77,6 +84,52 @@ const parseDateTime = (s?: string) => {
   } catch {
     return undefined;
   }
+};
+
+// Builds the top meta line for tasks according to:
+// - Dates as DD.MM.YYYY
+// - If same day with times: show date once and time range
+// - Else: "Date | Time - Date | Time (duration)"
+const buildTopLine = (startAt?: string, endAt?: string) => {
+  if (!startAt && !endAt) return '';
+  const s = parseDateTime(startAt);
+  const e = parseDateTime(endAt);
+  const sHasTime = Boolean(startAt && startAt.includes(' '));
+  const eHasTime = Boolean(endAt && endAt.includes(' '));
+  const mins = getDurationMinutes(startAt, endAt);
+
+  let label = '';
+  if (s && e) {
+    const sameDay = s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth() && s.getDate() === e.getDate();
+    if (sHasTime && eHasTime) {
+      if (sameDay) {
+        label = `${toDateStringDE(s)} | ${toTimeString(s)} - ${toTimeString(e)}`;
+      } else {
+        label = `${toDateStringDE(s)} | ${toTimeString(s)} - ${toDateStringDE(e)} | ${toTimeString(e)}`;
+      }
+    } else {
+      if (sameDay) {
+        if (sHasTime || eHasTime) {
+          const left = sHasTime ? `${toTimeString(s)}` : '';
+          const right = eHasTime ? `${toTimeString(e)}` : '';
+          const timePart = left && right ? `${left} - ${right}` : left || right;
+          label = timePart ? `${toDateStringDE(s)} | ${timePart}` : `${toDateStringDE(s)}`;
+        } else {
+          label = `${toDateStringDE(s)}`;
+        }
+      } else {
+        const left = `${toDateStringDE(s)}${sHasTime ? ` | ${toTimeString(s)}` : ''}`;
+        const right = `${toDateStringDE(e)}${eHasTime ? ` | ${toTimeString(e)}` : ''}`;
+        label = `${left} - ${right}`;
+      }
+    }
+  } else if (s) {
+    label = `${toDateStringDE(s)}${sHasTime ? ` | ${toTimeString(s)}` : ''}`;
+  } else if (e) {
+    label = `${toDateStringDE(e)}${eHasTime ? ` | ${toTimeString(e)}` : ''}`;
+  }
+
+  return `${label} ${durationLabel(mins)}`.trim();
 };
 
 function SimpleDropdown<T extends { id: string; name: string }>(
@@ -124,6 +177,17 @@ function SimpleDropdown<T extends { id: string; name: string }>(
                 <Text numberOfLines={1}>{item.name}</Text>
               </TouchableOpacity>
             )}
+            ListFooterComponent={(
+              <TouchableOpacity
+                onPress={() => {
+                  onChange('__add__');
+                  setOpen(false);
+                }}
+                style={styles.dropdownItem}
+              >
+                <Text numberOfLines={1}>+ Liste hinzufügen...</Text>
+              </TouchableOpacity>
+            )}
           />
           <TouchableOpacity onPress={() => setOpen(false)} style={styles.dropdownClose}>
             <Text style={{ color: '#6B7280' }}>Schließen</Text>
@@ -134,10 +198,14 @@ function SimpleDropdown<T extends { id: string; name: string }>(
   );
 }
 
-const PrioritySelector = ({ value, onChange }: { value: Priority; onChange: (p: Priority) => void }) => (
+const PrioritySelector = ({ value, onChange }: { value?: Priority; onChange: (p?: Priority) => void }) => (
   <View style={styles.priorityRow}>
     {(['low', 'medium', 'high'] as Priority[]).map((p, i) => (
-      <TouchableOpacity key={p} onPress={() => onChange(p)} style={[styles.chip, i !== 2 && styles.mr6, value === p && styles.chipActive]}>
+      <TouchableOpacity
+        key={p}
+        onPress={() => onChange(value === p ? undefined : p)}
+        style={[styles.chip, i !== 2 && styles.mr6, value === p && styles.chipActive]}
+      >
         <Text style={styles.chipText}>{p === 'low' ? 'Niedrig' : p === 'medium' ? 'Mittel' : 'Hoch'}</Text>
       </TouchableOpacity>
     ))}
@@ -381,10 +449,10 @@ const DateRangeInputs = ({
 
 // --- Main ---
 export default function Tasklist() {
-  const [lists, setLists] = useState<TaskList[]>([
-    { id: uid(), name: 'Schule', tasks: [], archived: [] },
-    { id: uid(), name: 'Familie', tasks: [], archived: [] },
-  ]);
+  const router = useRouter();
+  // Start without default lists so the create-list flow
+  // can enforce first-time creation when empty
+  const [lists, setLists] = useState<TaskList[]>([]);
   const [selectedListId, setSelectedListId] = useState<string | undefined>(undefined);
 
   // Draft editing
@@ -395,11 +463,20 @@ export default function Tasklist() {
   const [showCreate, setShowCreate] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
-  const [taskPriority, setTaskPriority] = useState<Priority>('medium');
+  const [taskPriority, setTaskPriority] = useState<Priority | undefined>(undefined);
   const [taskStart, setTaskStart] = useState<string>('');
   const [taskEnd, setTaskEnd] = useState<string>('');
 
-  const [newListName, setNewListName] = useState('');
+  const [showAddList, setShowAddList] = useState(false);
+  const [addListName, setAddListName] = useState('');
+  const [query, setQuery] = useState('');
+  const [showFilter, setShowFilter] = useState(false);
+  type SortBy = 'created' | 'datetime' | 'priority';
+  type SortDir = 'asc' | 'desc';
+  type GroupBy = 'none' | 'created' | 'datetime' | 'priority';
+  const [sortBy, setSortBy] = useState<SortBy>('created');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
 
   const currentList = useMemo(() => lists.find((l) => l.id === selectedListId), [lists, selectedListId]);
 
@@ -407,6 +484,7 @@ export default function Tasklist() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const STORAGE_KEY = '@vereinus/tasklists';
   const STORAGE_SEL = '@vereinus/selectedListId';
+  const lastSelectedIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     (async () => {
@@ -420,30 +498,42 @@ export default function Tasklist() {
         } else {
           setSelectedListId((prev) => prev ?? lists[0]?.id);
         }
-      } catch {}
+      } catch { }
     })();
   }, []);
+
+  // Show or hide the add-list popup based on focus and current list count.
+  useFocusEffect(
+    useCallback(() => {
+      if ((lists?.length ?? 0) === 0) setShowAddList(true);
+      else setShowAddList(false);
+      return () => setShowAddList(false);
+    }, [lists])
+  );
 
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(lists)).catch(() => {});
-      if (selectedListId) AsyncStorage.setItem(STORAGE_SEL, selectedListId).catch(() => {});
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(lists)).catch(() => { });
+      if (selectedListId) AsyncStorage.setItem(STORAGE_SEL, selectedListId).catch(() => { });
     }, 200);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [lists, selectedListId]);
+  // Remove one-time gating: focus effect controls showing the add-list popup
 
-  // --- Listen ---
-  const addList = () => {
-    const name = newListName.trim();
-    if (!name) return;
-    const newL: TaskList = { id: uid(), name, tasks: [], archived: [] };
-    setLists((prev) => [...prev, newL]);
-    setNewListName('');
-    setSelectedListId(newL.id);
-  };
+  // Intercept special dropdown selection to add new list
+  useEffect(() => {
+    if (selectedListId === '__add__') {
+      setShowAddList(true);
+      // revert back to previous selection (if any)
+      setSelectedListId(lastSelectedIdRef.current ?? lists[0]?.id);
+    } else {
+      lastSelectedIdRef.current = selectedListId;
+    }
+  }, [selectedListId, lists]);
+
   const deleteCurrentList = () => {
     if (!currentList) return;
     Alert.alert('Liste löschen?', 'Diese Liste und alle Aufgaben werden gelöscht.', [
@@ -475,6 +565,7 @@ export default function Tasklist() {
       endAt: taskEnd.trim() || undefined,
       done: false,
       subtasks: [],
+      createdAt: toDateTimeString(new Date()),
     };
     setLists((prev) => prev.map((l) => (l.id === currentList.id ? { ...l, tasks: [newTask, ...l.tasks] } : l)));
     setTaskTitle('');
@@ -556,68 +647,104 @@ export default function Tasklist() {
     if (!currentList) return;
     setLists((prev) => prev.map((l) => (l.id === currentList.id ? { ...l, tasks: l.tasks.filter((t) => t.id !== taskId) } : l)));
   };
-
-  // --- Render ---
-  const renderTaskItem = ({ item: t }: { item: Task }) => {
-    const mins = getDurationMinutes(t.startAt, t.endAt);
-    const topLine = t.startAt || t.endAt ? `${formatDate(t.startAt)}${t.startAt && t.endAt ? ' – ' : ''}${formatDate(t.endAt)} ${durationLabel(mins)}` : '';
-    const isEditing = editingId === t.id;
-    const draft = drafts[t.id] ?? t;
-
-    if (!isEditing) {
-      return (
-        <TouchableOpacity activeOpacity={0.7} onPress={() => beginEdit(t)} style={styles.taskCard}>
-          {!!topLine && <Text style={styles.metaStrong}>{topLine.trim()}</Text>}
-          <View style={styles.taskRow}>
-            <Pressable
-              onPress={(e) => {
-                // prevent card onPress
-                e.stopPropagation?.();
-                completeAndArchive(t.id);
-              }}
-              style={[styles.checkbox, styles.mr8]}
-            >
-              <Text style={styles.checkboxText}></Text>
-            </Pressable>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.taskTitle}>{t.title}</Text>
-              {!!t.description && (
-                <Text style={styles.taskDesc} numberOfLines={2}>
-                  {t.description}
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity onPress={() => deleteTask(t.id)} style={[styles.iconBtn, styles.ml8]}>
-              <Text style={styles.iconBtnText}>🗑️</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      );
+  const renderProcessedItem = ({ item }: { item: any }) => {
+    if (item && (item as any)._type === 'header') {
+      const h = item as any;
+      return <Text style={[styles.h2, { marginTop: 12 }]}>{h.label}</Text>;
     }
+    return renderTaskItem({ item } as any);
+  };
 
+  type ListEntry = any;
+  const processTasks = (tasks: Task[], q: string): ListEntry[] => {
+    const queryLc = q.trim().toLowerCase();
+    let items = tasks.filter((t) => !queryLc || t.title.toLowerCase().includes(queryLc));
+    const prioRank = (p?: Priority) => (!p ? 0 : p === 'low' ? 1 : p === 'medium' ? 2 : 3);
+    items = items.slice().sort((a, b) => {
+      let ka = 0, kb = 0;
+      if (sortBy === 'created') {
+        ka = parseDateTime(a.createdAt ?? '')?.getTime?.() ?? 0;
+        kb = parseDateTime(b.createdAt ?? '')?.getTime?.() ?? 0;
+      } else if (sortBy === 'datetime') {
+        ka = parseDateTime(a.startAt ?? a.endAt ?? '')?.getTime?.() ?? 0;
+        kb = parseDateTime(b.startAt ?? b.endAt ?? '')?.getTime?.() ?? 0;
+      } else if (sortBy === 'priority') {
+        ka = prioRank(a.priority);
+        kb = prioRank(b.priority);
+      }
+      const diff = ka - kb;
+      return sortDir === 'asc' ? diff : -diff;
+    });
+    if (groupBy === 'none') return items;
+    const groups = new Map<string, { key: string; label: string; items: Task[] }>();
+    const labelFor = (t: Task) => {
+      if (groupBy === 'priority') {
+        if (!t.priority) return 'Priorität: Keine';
+        return t.priority === 'low' ? 'Priorität: Niedrig' : t.priority === 'medium' ? 'Priorität: Mittel' : 'Priorität: Hoch';
+      }
+      const d = groupBy === 'created' ? parseDateTime(t.createdAt) : parseDateTime(t.startAt ?? t.endAt);
+      if (!d) return 'Ohne Datum';
+      return toDateStringDE(d);
+    };
+    for (const t of items) {
+      const label = labelFor(t);
+      if (!groups.has(label)) groups.set(label, { key: label, label, items: [] });
+      groups.get(label)!.items.push(t);
+    }
+    const out: ListEntry[] = [];
+    for (const g of groups.values()) {
+      out.push({ _type: 'header', key: g.key, label: g.label });
+      out.push(...g.items);
+    }
+    return out;
+  };
+  // --- Render ---
+  const getPriorityFlag = (prio: Priority) => {
+    try {
+      if (prio === 'low') return require('../assets/images/flagg.png');
+      if (prio === 'medium') return require('../assets/images/flago.png');
+      if (prio === 'high') return require('../assets/images/flagr.png');
+      return undefined as any;
+    } catch {
+      return undefined as any;
+    }
+  };
+
+  const renderTaskItem = ({ item: t }: { item: Task }) => {
+    const topLine = buildTopLine(t.startAt, t.endAt);
     return (
-      <View style={styles.taskCard}>
-        {!!topLine && <Text style={styles.metaStrong}>{topLine.trim()}</Text>}
-        <View style={styles.taskRow}>
-          <TouchableOpacity disabled style={[styles.checkbox, styles.mr8]}>
-            <Text style={styles.checkboxText}></Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <TextInput style={styles.input} value={draft.title} onChangeText={(v) => updateDraft({ title: v })} placeholder="Titel" placeholderTextColor={'#95959588'} />
-            <TextInput style={[styles.input, { minHeight: 40 }]} value={draft.description ?? ''} onChangeText={(v) => updateDraft({ description: v })} placeholder="Beschreibung" placeholderTextColor={'#95959588'} multiline />
-            <PrioritySelector value={draft.priority} onChange={(p) => updateDraft({ priority: p })} />
-            <DateRangeInputs startAt={draft.startAt} endAt={draft.endAt} onChange={(patch) => updateDraft(patch)}/>
-            <View style={styles.row}>
-              <TouchableOpacity onPress={commitEdit} style={[styles.btnLink, styles.mr8]}>
-                <Text style={styles.btnLinkText}>Speichern</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={cancelEdit} style={styles.btnLink}>
-                <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
-              </TouchableOpacity>
-            </View>
+      <TouchableOpacity activeOpacity={0.7} onPress={() => beginEdit(t)} style={styles.taskCard}>
+        {!!topLine && (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaStrong}>{topLine.trim()}</Text>
+            {t.priority && (
+              <Image source={getPriorityFlag(t.priority)} style={styles.flagIcon} />
+            )}
           </View>
+        )}
+        <View style={styles.taskRow}>
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation?.();
+              completeAndArchive(t.id);
+            }}
+            style={[styles.checkbox, styles.mr8]}
+          >
+            <Text style={styles.checkboxText}></Text>
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.taskTitle}>{t.title}</Text>
+            {!!t.description && (
+              <Text style={styles.taskDesc} numberOfLines={2}>
+                {t.description}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity onPress={() => deleteTask(t.id)} style={[styles.iconBtn, styles.ml8]}>
+            <Ionicons name="trash-outline" size={16} color="#6B7280" />
+          </TouchableOpacity>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -634,56 +761,236 @@ export default function Tasklist() {
         </TouchableOpacity>
       </View>
 
+      <Modal
+        visible={showAddList}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          // Block closing via back if no lists exist
+          if ((lists?.length ?? 0) > 0) setShowAddList(false);
+        }}
+      >
+        <Pressable
+          style={styles.dropdownOverlay}
+          onPress={() => {
+            // Block overlay dismiss if no lists exist
+            if ((lists?.length ?? 0) > 0) setShowAddList(false);
+          }}
+        />
+        <View style={styles.dropdownPanel}>
+          <View style={{ padding: 12 }}>
+            <Text style={styles.label}>Neue Liste</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Name der Liste"
+              placeholderTextColor={'#95959588'}
+              value={addListName}
+              onChangeText={setAddListName}
+              autoFocus
+            />
+            <View style={styles.row}>
+              <TouchableOpacity
+                onPress={() => {
+                  const name = addListName.trim();
+                  if (!name) return;
+                  const newL: TaskList = { id: uid(), name, tasks: [], archived: [] };
+                  setLists((prev) => [...prev, newL]);
+                  setSelectedListId(newL.id);
+                  setAddListName('');
+                  setShowAddList(false);
+                }}
+                style={[styles.btnLink, styles.mr8]}
+              >
+                <Text style={styles.btnLinkTextAdd}>Hinzufügen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                
+                  setAddListName('');
+                  // Navigate to index tab explicitly
+                  router.push('/');
+                  // Close modal afterwards (in case we remain on this route briefly)
+                  setShowAddList(false);
+                }}
+                style={styles.btnLink}
+              >
+                <Text style={styles.btnLinkTextCancel}>Abbrechen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <View style={[styles.row, { alignItems: 'center' }]}>
-        <TextInput placeholder="Neue Liste (z. B. Einkauf)" placeholderTextColor={'#95959588'} value={newListName} onChangeText={setNewListName} style={[styles.input, styles.mr8, { flex: 1 }]} />
-        <TouchableOpacity onPress={addList} style={styles.btnLink}>
-          <Text style={styles.btnLinkText}>+ Liste</Text>
+        <Ionicons name="search" size={20} color="#6B7280" style={{ marginRight: 8 }} />
+        <TextInput
+          placeholder="Suchen…"
+          placeholderTextColor={'#95959588'}
+          style={[styles.input, { flex: 1, marginBottom: 0 }]}
+          value={query}
+          onChangeText={setQuery}
+          autoCorrect={false}
+          autoCapitalize="none"
+          multiline={false}
+          clearButtonMode="while-editing"
+        />
+        <TouchableOpacity onPress={() => setShowFilter(true)} style={[styles.iconBtn, styles.ml8]}>
+          <Ionicons name="options-outline" size={22} color="#6B7280" />
         </TouchableOpacity>
       </View>
 
       <TouchableOpacity onPress={() => setShowCreate((s) => !s)} style={styles.btnLink}>
-        <Text style={styles.btnLinkText}>+ Aufgabe hinzufügen</Text>
+        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufügen</Text>
       </TouchableOpacity>
 
-      {showCreate && (
-        <View style={styles.card}>
-          <TextInput placeholder="Titel" placeholderTextColor={'#95959588'} value={taskTitle} onChangeText={setTaskTitle} style={styles.input} />
-          <TextInput placeholder="Beschreibung" placeholderTextColor={'#95959588'} value={taskDesc} onChangeText={setTaskDesc} style={[styles.input, { minHeight: 40 }]} multiline />
-          <PrioritySelector value={taskPriority} onChange={setTaskPriority} />
-          <DateRangeInputs
-            startAt={taskStart}
-            endAt={taskEnd}
-            onChange={({ startAt, endAt }) => {
-              if (startAt !== undefined) setTaskStart(startAt);
-              if (endAt !== undefined) setTaskEnd(endAt);
-            }}
-          />
-          <View style={styles.row}>
-            <TouchableOpacity onPress={addTask} style={[styles.btnLink, styles.mr8]}>
-              <Text style={styles.btnLinkText}>Speichern</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowCreate(false)} style={styles.btnLink}>
-              <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
-            </TouchableOpacity>
+      <Modal visible={showFilter} transparent animationType="fade" onRequestClose={() => setShowFilter(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setShowFilter(false)} />
+        <View style={styles.modalCenterWrap}>
+          <View style={styles.modalCard}>
+            <View style={{ padding: 12 }}>
+              <Text style={styles.h2}>Filtern, Sortieren, Gruppieren</Text>
+              <View style={styles.row}>
+                <View style={[styles.col, styles.mr8]}>
+                  <Text style={styles.label}>Sortieren nach</Text>
+                  <SimpleDropdown
+                    data={[
+                      { id: "created", name: "Hinzugefügt am" },
+                      { id: "datetime", name: "Datum & Uhrzeit" },
+                      { id: "priority", name: "Priorität" },
+                    ]}
+                    selectedId={sortBy}
+                    onChange={(id) => setSortBy(id as any)}
+                    placeholder="Sortieren nach"
+                  />
+                </View>
+                <View style={styles.col}>
+                  <Text style={styles.label}>Richtung</Text>
+                  <View style={{ flexDirection: "column", gap: 5 }}>
+                    <TouchableOpacity onPress={() => setSortDir("asc")} style={[styles.chip, styles.mr6, sortDir === "asc" && styles.chipActive]}>
+                      <Text style={styles.chipText}>Aufsteigend</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setSortDir("desc")} style={[styles.chip, sortDir === "desc" && styles.chipActive]}>
+                      <Text style={styles.chipText}>Absteigend</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.label}>Gruppieren nach</Text>
+                <SimpleDropdown
+                  data={[
+                    { id: "none", name: "Keine" },
+                    { id: "created", name: "Hinzugefügt am" },
+                    { id: "datetime", name: "Datum & Uhrzeit" },
+                    { id: "priority", name: "Priorität" },
+                  ]}
+                  selectedId={groupBy}
+                  onChange={(id) => setGroupBy(id as any)}
+                  placeholder="Gruppieren nach"
+                />
+              </View>
+              <View style={[styles.row, { marginTop: 8 }]}>
+                <TouchableOpacity onPress={() => setShowFilter(false)} style={[styles.btnLink, styles.mr8]}>
+                  <Text style={styles.btnLinkText}>Übernehmen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setGroupBy("none"); setSortBy("created"); setSortDir("desc"); }} style={styles.btnLink}>
+                  <Text style={styles.btnLinkTextMuted}>Zurücksetzen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         </View>
-      )}
+      </Modal>
 
-      <FlatList data={currentList?.tasks ?? []} keyExtractor={(t) => t.id} ListEmptyComponent={() => <Text style={styles.muted}>Keine Aufgaben in dieser Liste.</Text>} contentContainerStyle={{ paddingBottom: 24 }} renderItem={renderTaskItem} />
+<Modal visible={!!editingId} transparent animationType="fade" onRequestClose={() => cancelEdit()}>
+  <Pressable style={styles.modalOverlay} onPress={cancelEdit} />
+  <View style={styles.modalCenterWrap}>
+    <View style={styles.modalCard}>
+      <ScrollView contentContainerStyle={{ padding: 12 }} keyboardShouldPersistTaps="handled">
+        <Text style={styles.h2}>Aufgabe bearbeiten</Text>
+        {editingId ? (() => {
+          const t = (drafts[editingId] ?? (currentList?.tasks.find(x => x.id === editingId))) as Task | undefined;
+          if (!t) return null;
+          return (
+            <View>
+              <TextInput style={styles.input} value={t.title} onChangeText={(v) => updateDraft({ title: v })} placeholder="Titel" placeholderTextColor={'#95959588'} />
+              <TextInput style={[styles.input, { minHeight: 40 }]} value={t.description ?? ''} onChangeText={(v) => updateDraft({ description: v })} placeholder="Beschreibung" placeholderTextColor={'#95959588'} multiline />
+              <PrioritySelector value={t.priority} onChange={(p) => updateDraft({ priority: p })} />
+              <DateRangeInputs startAt={t.startAt} endAt={t.endAt} onChange={(patch) => updateDraft(patch)} />
+              <View style={[styles.row, { marginTop: 8 }]}>
+                <TouchableOpacity onPress={commitEdit} style={[styles.btnLink, styles.mr8]}><Text style={styles.btnLinkText}>Speichern</Text></TouchableOpacity>
+                <TouchableOpacity onPress={cancelEdit} style={styles.btnLink}><Text style={styles.btnLinkTextMuted}>Abbrechen</Text></TouchableOpacity>
+              </View>
+            </View>
+          );
+        })() : null}
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+
+      <Modal visible={showCreate} transparent animationType="fade" onRequestClose={() => setShowCreate(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setShowCreate(false)} />
+        <View style={styles.modalCenterWrap}>
+          <View style={styles.modalCard}>
+            <View style={{ padding: 12 }}>
+              <Text style={styles.h2}>Aufgabe erstellen</Text>
+              <TextInput placeholder="Titel" placeholderTextColor={'#95959588'} value={taskTitle} onChangeText={setTaskTitle} style={styles.input} />
+              <TextInput placeholder="Beschreibung" placeholderTextColor={'#95959588'} value={taskDesc} onChangeText={setTaskDesc} style={[styles.input, { minHeight: 40 }]} multiline />
+              <PrioritySelector value={taskPriority} onChange={setTaskPriority} />
+              <DateRangeInputs
+                startAt={taskStart}
+                endAt={taskEnd}
+                onChange={({ startAt, endAt }) => {
+                  if (startAt !== undefined) setTaskStart(startAt);
+                  if (endAt !== undefined) setTaskEnd(endAt);
+                }}
+              />
+              <View style={[styles.row, { marginTop: 8 }]}>
+                <TouchableOpacity onPress={addTask} style={[styles.btnLink, styles.mr8]}>
+                  <Text style={styles.btnLinkText}>Speichern</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowCreate(false)} style={styles.btnLink}>
+                  <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <FlatList
+        data={processTasks(currentList?.tasks ?? [], query)}
+        keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
+        ListEmptyComponent={() => <Text style={styles.muted}>Keine Aufgaben in dieser Liste.</Text>}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        renderItem={renderProcessedItem}
+      />
 
       {!!(currentList?.archived?.length ?? 0) && (
         <>
           <Text style={styles.h2}>Archiviert</Text>
           <FlatList
-            data={currentList?.archived ?? []}
-            keyExtractor={(t) => t.id}
+            data={processTasks(currentList?.archived ?? [], query)}
+            keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
             contentContainerStyle={{ paddingBottom: 40 }}
-            renderItem={({ item: t }) => {
-              const mins = getDurationMinutes(t.startAt, t.endAt);
-              const topLine = t.startAt || t.endAt ? `${formatDate(t.startAt)}${t.startAt && t.endAt ? ' – ' : ''}${formatDate(t.endAt)} ${durationLabel(mins)}` : '';
+            renderItem={({ item }) => {
+              if ((item as any)._type === 'header') {
+                const h = item as any;
+                return <Text style={[styles.h2, { marginTop: 12 }]}>{h.label}</Text>;
+              }
+              const t = item as any as Task;
+              const topLine = buildTopLine(t.startAt, t.endAt);
               return (
                 <View style={[styles.taskCard, styles.archivedCard]}>
-                  {!!topLine && <Text style={styles.metaStrong}>{topLine.trim()}</Text>}
+                  {!!topLine && (
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaStrong}>{topLine.trim()}</Text>
+                      {t.priority && (
+                        <Image source={getPriorityFlag(t.priority)} style={styles.flagIcon} />
+                      )}
+                    </View>
+                  )}
                   <View style={styles.taskRow}>
                     <View style={[styles.checkbox, styles.mr8, styles.checkboxDone]}>
                       <Text style={styles.checkboxText}>✓</Text>
@@ -713,6 +1020,40 @@ export default function Tasklist() {
 // --- Styles ---
 const styles = StyleSheet.create({
   container: { flex: 1, paddingTop: Platform.select({ ios: 12, android: 8 }), paddingHorizontal: 12 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  flagIcon: { width: 14, height: 14, marginLeft: 6 },
+
+  // Modal overlay for filter modal
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+
+  // Center modal content vertically and horizontally
+  modalCenterWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Card style for modal content
+  modalCard: { 
+    width: '90%', 
+    backgroundColor: '#fff', 
+    borderRadius: 12, 
+    borderWidth: 1, 
+    borderColor: '#E5E7EB', 
+    maxHeight: 520, 
+    flexShrink: 1, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 3 }, 
+    shadowOpacity: 0.2, 
+    shadowRadius: 6, 
+    elevation: 6 
+  },
 
   mr6: { marginRight: 6 },
   mr8: { marginRight: 8 },
@@ -734,7 +1075,7 @@ const styles = StyleSheet.create({
   },
   dropdownPanel: {
     position: 'absolute',
-    top: 120,
+    top: 200,
     left: 16,
     right: 16,
     backgroundColor: '#fff',
@@ -742,7 +1083,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     maxHeight: 300,
-    overflow: 'hidden',
+    overflow: 'visible',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
@@ -783,16 +1124,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     marginBottom: 8,
-  },
+      },
   label: { fontSize: 12, color: '#6B7280', marginBottom: 4 },
 
   btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start' },
+  btnLinkTextAddTask: { color: '#2563EB', fontWeight: '700', bottom: -10 },
   btnLinkText: { color: '#2563EB', fontWeight: '700' },
+  btnLinkTextAdd: { color: '#2563EB', fontWeight: '700', top: -10 },
+  btnLinkTextCancel: { color: '#6B7280', fontWeight: '600',  top: -10},
   btnLinkTextMuted: { color: '#6B7280', fontWeight: '600' },
 
-  muted: { color: '#6B7280', marginVertical: 6 },
+  muted: { color: '#6B7280', marginVertical: 6, bottom: -20 },
 
-  card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10 },
+  card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10, backgroundColor: '#FFFFFF' },
 
   taskCard: {
     borderWidth: 1,
@@ -800,10 +1144,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 10,
     marginBottom: 10,
+    bottom: -20,
   },
   archivedCard: { backgroundColor: '#F3F4F6' },
 
-  taskRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  taskRow: { flexDirection: 'row' },
 
   taskTitle: { fontSize: 16, fontWeight: '700' },
   taskDesc: { fontSize: 13, color: '#374151', marginTop: 2 },
@@ -828,7 +1173,7 @@ const styles = StyleSheet.create({
   iconBtn: { paddingHorizontal: 6, paddingVertical: 6 },
   iconBtnText: { fontSize: 14, color: '#6B7280' },
 
-  priorityRow: { flexDirection: 'row', marginBottom: 8 },
+  priorityRow: { flexDirection: 'row' },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: '#CBD5E1' },
   chipActive: { backgroundColor: '#D1FAE5', borderColor: '#10B981' },
   chipText: { fontSize: 12, fontWeight: '600' },
