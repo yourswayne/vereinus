@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard } from 'react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -21,6 +21,25 @@ export default function Home() {
     ]
   );
   const [draft, setDraft] = useState('');
+  // Chat input auto-grow up to a limit, then scroll
+  const MIN_CHAT_INPUT_HEIGHT = 56;
+  const MAX_CHAT_INPUT_HEIGHT = 120;
+  const TAB_BAR_HEIGHT = 56; // Keep input above native tab bar
+  const [chatInputHeight, setChatInputHeight] = useState<number>(MIN_CHAT_INPUT_HEIGHT);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const s = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(e?.endCoordinates?.height ?? 0);
+    });
+    const h = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+    return () => { s.remove(); h.remove(); };
+  }, []);
 
   // Announcements state (template)
   const [announcements, setAnnouncements] = useState(
@@ -139,8 +158,9 @@ export default function Home() {
       </View>
     );
 
+    const bottomGap = keyboardVisible ? 8 : insets.bottom + TAB_BAR_HEIGHT + 8;
     return (
-      <KeyboardAvoidingView style={[styles.container, containerPaddings]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={[styles.container, containerPaddings, { justifyContent: 'flex-start' }]} behavior={'padding'}>
         <View style={styles.chatHeader}>
           <TouchableOpacity onPress={() => setScreen('home')} style={styles.headerBack}>
             <Ionicons name="chevron-back" size={22} color="#194055" />
@@ -149,25 +169,30 @@ export default function Home() {
           <View style={{ width: 60 }} />
         </View>
         <FlatList
-          style={{ width: '100%' }}
+          style={{ width: '100%', flex: 1 }}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, width: '100%', maxWidth: 720 }}
           data={messages}
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
         />
-        <View style={[styles.inputRow, { marginBottom: insets.bottom + 8}]}>
+        <View style={[styles.inputRow, { marginBottom: bottomGap}]}>
           <TextInput
-            style={[styles.input, styles.inputMultiline, { flex: 1, marginBottom: 0, bottom: 60 }]}
+            style={[styles.input, { flex: 1, marginBottom: 0, height: chatInputHeight, maxHeight: MAX_CHAT_INPUT_HEIGHT }]}
             placeholder="Nachricht schreiben…"
             placeholderTextColor={'#95959588'}
             value={draft}
             onChangeText={setDraft}
             multiline
-            scrollEnabled
+            scrollEnabled={chatInputHeight >= MAX_CHAT_INPUT_HEIGHT}
             textAlignVertical="top"
+            onContentSizeChange={(e) => {
+              const h = Math.ceil(e.nativeEvent.contentSize.height);
+              const next = Math.min(MAX_CHAT_INPUT_HEIGHT, Math.max(MIN_CHAT_INPUT_HEIGHT, h));
+              if (next !== chatInputHeight) setChatInputHeight(next);
+            }}
           />
           <TouchableOpacity
-            style={[styles.sendBtn,]}
+            style={[styles.sendBtn]}
             onPress={() => {
               const txt = draft.trim();
               if (!txt) return;
@@ -177,7 +202,7 @@ export default function Home() {
               setDraft('');
             }}
           >
-            <Ionicons name="mail-outline" size={22} color="#FFFFFF" />
+            <Ionicons name="mail-outline" size={24} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -301,7 +326,7 @@ const styles = StyleSheet.create({
   bubbleText: { fontSize: 15 },
   bubbleTime: { fontSize: 10, color: '#6B7280', marginTop: 4, alignSelf: 'flex-end' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', width: '100%', maxWidth: 720, marginTop: 6 },
-  sendBtn: { paddingVertical: 10, paddingHorizontal: 14, marginLeft: 8, backgroundColor: '#194055', borderRadius: 12, alignItems: 'center', justifyContent: 'center', bottom: 60  },
+  sendBtn: { paddingVertical: 14, paddingHorizontal: 16, marginLeft: 8, backgroundColor: '#194055', borderRadius: 12, alignItems: 'center', justifyContent: 'center'  },
   chatHeader: { width: '100%', maxWidth: 720, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   headerBack: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingVertical: 4 },
   headerBackText: { color: '#194055', fontWeight: '600', marginLeft: 2 },
