@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../lib/supabase';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
 type Screen = 'home' | 'ankuendigung' | 'chat' | 'uebungen' | 'aufgaben';
@@ -40,6 +41,72 @@ export default function Home() {
     });
     return () => { s.remove(); h.remove(); };
   }, []);
+
+  // --- Supabase session + Orgs/Groups + remote Announcements ---
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
+  const [groups, setGroups] = useState<{ id: string; name: string; org_id: string }[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [orgRole, setOrgRole] = useState<'director' | 'teacher' | 'student' | null>(null);
+  const [annRemote, setAnnRemote] = useState<{ id: string; title: string; body: string | null; event_date: string | null }[]>([]);
+  const [loadingRemote, setLoadingRemote] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+      setSessionUserId(data.session?.user?.id ?? null);
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e: any, s: any) => {
+      setSessionUserId(s?.user?.id ?? null);
+    });
+    return () => { sub.subscription.unsubscribe(); alive = false; };
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!sessionUserId) {
+        setOrgs([]); setGroups([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setAnnRemote([]);
+        return;
+      }
+      // load org memberships and orgs
+      const { data: mems } = await supabase.from('organisation_members').select('org_id, role').eq('user_id', sessionUserId);
+      const memsTyped = (mems ?? []) as { org_id: string; role: 'director' | 'teacher' | 'student' }[];
+      const orgIds = memsTyped.map(m => m.org_id);
+      if (!orgIds.length) { setOrgs([]); return; }
+      const { data: orgRows } = await supabase.from('organisations').select('id, name').in('id', orgIds);
+      const orgList = (orgRows ?? []) as any[];
+      setOrgs(orgList);
+      const nextOrg = selectedOrgId && orgIds.includes(selectedOrgId) ? selectedOrgId : (orgList[0]?.id ?? null);
+      setSelectedOrgId(nextOrg);
+      setOrgRole(memsTyped.find(m => m.org_id === nextOrg)?.role ?? null);
+      if (nextOrg) {
+        // groups of that org where user is a member
+        const { data: gm } = await supabase.from('group_members').select('group_id').eq('user_id', sessionUserId);
+        const gmTyped = (gm ?? []) as { group_id: string }[];
+        const gIds = gmTyped.map((x) => x.group_id);
+        const { data: groupRows } = await supabase.from('groups').select('id, name, org_id').eq('org_id', nextOrg).in('id', gIds.length ? gIds : ['00000000-0000-0000-0000-000000000000']);
+        setGroups((groupRows ?? []) as any[]);
+        setSelectedGroupId((groupRows ?? [])[0]?.id ?? null);
+      } else {
+        setGroups([]); setSelectedGroupId(null);
+      }
+    })();
+  }, [sessionUserId]);
+
+  useEffect(() => {
+    (async () => {
+      if (!selectedOrgId || !sessionUserId) { setAnnRemote([]); return; }
+      setLoadingRemote(true);
+      let q = supabase.from('announcements').select('id,title,body,event_date').eq('org_id', selectedOrgId).order('created_at', { ascending: false });
+      if (selectedGroupId) q = q.eq('group_id', selectedGroupId); else q = q.is('group_id', null);
+      const { data } = await q;
+      setAnnRemote((data ?? []) as any[]);
+      setLoadingRemote(false);
+    })();
+  }, [selectedOrgId, selectedGroupId, sessionUserId]);
 
   // Announcements state (template)
   const [announcements, setAnnouncements] = useState(
@@ -83,23 +150,53 @@ export default function Home() {
           <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Ankündigungen</Text>
           <View style={{ width: 60 }} />
         </View>
+        {/* Verein/Gruppe Switcher */}
+        {sessionUserId ? (
+          <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12, marginBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ fontWeight: '600', marginRight: 8 }}>Verein:</Text>
+              <FlatList horizontal data={orgs} keyExtractor={(o) => o.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity onPress={() => { setSelectedOrgId(item.id); setSelectedGroupId(null); }} style={[styles.badge, selectedOrgId === item.id && styles.badgeActive]}>
+                    <Text style={[styles.badgeText, selectedOrgId === item.id && styles.badgeTextActive]}>{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+            {!!groups.length && (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontWeight: '600', marginRight: 8 }}>Gruppe:</Text>
+                <FlatList horizontal data={groups} keyExtractor={(g) => g.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity onPress={() => setSelectedGroupId(item.id)} style={[styles.badge, selectedGroupId === item.id && styles.badgeActive]}>
+                      <Text style={[styles.badgeText, selectedGroupId === item.id && styles.badgeTextActive]}>{item.name}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            )}
+          </View>
+        ) : null}
+
         <FlatList
-          data={announcements}
+          data={annRemote}
           keyExtractor={(x) => x.id}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24, width: '100%', maxWidth: 360 }}
           renderItem={({ item }) => (
             <View style={styles.card}> 
               <Text style={styles.annTitle}>{item.title}</Text>
-              <Text style={styles.annMeta}>{formatDateDE(item.date)}</Text>
-              <Text style={styles.annBody}>{item.body}</Text>
+              <Text style={styles.annMeta}>{item.event_date ? formatDateDE(item.event_date) : 'Ohne Datum'}</Text>
+              {!!item.body && <Text style={styles.annBody}>{item.body}</Text>}
             </View>
           )}
-          ListEmptyComponent={<Text style={styles.text}>Keine Ankündigungen vorhanden.</Text>}
+          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
         />
 
-        <TouchableOpacity style={[styles.button, { marginTop: 8 }]} onPress={() => setShowNewAnnouncement(true)}>
-          <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
-        </TouchableOpacity>
+        {(sessionUserId && (orgRole === 'teacher' || orgRole === 'director') && selectedOrgId) && (
+          <TouchableOpacity style={[styles.button, { marginTop: 8 }]} onPress={() => setShowNewAnnouncement(true)}>
+            <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
+          </TouchableOpacity>
+        )}
 
 
         <Modal visible={showNewAnnouncement} transparent animationType="fade" onRequestClose={() => setShowNewAnnouncement(false)}>
@@ -122,16 +219,16 @@ export default function Home() {
                 <View style={{ flexDirection: 'row' }}>
                   <TouchableOpacity
                     style={[styles.btnLink, { marginRight: 8 }]}
-                    onPress={() => {
+                    onPress={async () => {
                       const t = newTitle.trim();
                       const b = newBody.trim();
-                      if (!t) return;
-                      const today = new Date();
-                      const date = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
-                      setAnnouncements((prev) => [{ id: Math.random().toString(36).slice(2,10), title: t, body: b, date }, ...prev]);
-                      setNewTitle('');
-                      setNewBody('');
-                      setShowNewAnnouncement(false);
+                      if (!t || !selectedOrgId || !sessionUserId) return;
+                      const payload: any = { org_id: selectedOrgId, group_id: selectedGroupId, author_id: sessionUserId, title: t, body: b || null };
+                      const { data, error } = await supabase.from('announcements').insert(payload).select('id,title,body,event_date').single();
+                      if (!error && data) {
+                        setAnnRemote((prev) => [data as any, ...prev]);
+                        setNewTitle(''); setNewBody(''); setShowNewAnnouncement(false);
+                      }
                     }}
                   >
                     <Text style={styles.btnLinkText}>Speichern</Text>
@@ -234,6 +331,7 @@ export default function Home() {
     <SafeAreaView style={[styles.container, containerPaddings]}>
       
       <Text style={styles.title}>Vereins Übersicht</Text>
+      {/* Login-Button entfernt: Auth flow steht jetzt über /login */}
 
       <TouchableOpacity style={styles.button} onPress={() => setScreen('ankuendigung')}>
         <Text style={styles.buttonText}>Ankündigungen</Text>
@@ -309,6 +407,10 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8 },
   inputMultiline: { height: 44 },
   textarea: { height: 120 },
+  badge: { paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 999, marginRight: 8 },
+  badgeActive: { backgroundColor: '#194055', borderColor: '#194055' },
+  badgeText: { color: '#111827', fontWeight: '600' },
+  badgeTextActive: { color: '#fff', fontWeight: '700' },
 
   // Modal helpers
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.2)' },
