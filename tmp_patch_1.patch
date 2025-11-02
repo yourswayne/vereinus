@@ -1,0 +1,6 @@
+*** Begin Patch
+*** Update File: Vereinus/app/index.tsx
+@@
+-import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image } from 'react-native';
++import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert } from 'react-native';
+*** End Patch
