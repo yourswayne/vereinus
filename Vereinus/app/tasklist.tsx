@@ -138,11 +138,13 @@ function SimpleDropdown<T extends { id: string; name: string }>(
     selectedId,
     onChange,
     placeholder = 'Liste wählen…',
+    style,
   }: {
     data: T[];
     selectedId?: string;
     onChange: (id: string) => void;
     placeholder?: string;
+    style?: any;
   },
 ) {
   const [open, setOpen] = useState(false);
@@ -154,7 +156,7 @@ function SimpleDropdown<T extends { id: string; name: string }>(
         onPress={() => setOpen(true)}
         style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
       >
-        <Text numberOfLines={1}>{selected?.name ?? placeholder}</Text>
+        <Text numberOfLines={1} style={style}>{selected?.name ?? placeholder}</Text>
         <Text>▾</Text>
       </TouchableOpacity>
 
@@ -356,21 +358,21 @@ const DateRangeInputs = ({
         <View style={styles.row}>
           <View style={[styles.col, styles.mr8]}>
             <Text style={styles.label}>Von (Datum)</Text>
-            <TextInput value={startDate} placeholder="YYYY-MM-DD" placeholderTextColor={'#95959588'} onChangeText={(v) => onChange({ startAt: v ? v + (startTime ? ` ${startTime}` : '') : undefined })} style={styles.input} />
+            <TextInput value={startDate} placeholder="YYYY-MM-DD" placeholderTextColor={'rgba(255, 255, 255, 1)'} onChangeText={(v) => onChange({ startAt: v ? v + (startTime ? ` ${startTime}` : '') : undefined })} style={styles.input} />
           </View>
           <View style={styles.col}>
             <Text style={styles.label}>Von (Uhrzeit, optional)</Text>
-            <TextInput value={startTime} placeholder="HH:mm" placeholderTextColor={'#95959588'} onChangeText={(v) => onChange({ startAt: startDate ? startDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
+            <TextInput value={startTime} placeholder="HH:mm" placeholderTextColor={'#ffffffff'} onChangeText={(v) => onChange({ startAt: startDate ? startDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
           </View>
         </View>
         <View style={styles.row}>
           <View style={[styles.col, styles.mr8]}>
             <Text style={styles.label}>Bis (Datum)</Text>
-            <TextInput value={endDate} placeholder="YYYY-MM-DD" placeholderTextColor={'#95959588'} onChangeText={(v) => onChange({ endAt: v ? v + (endTime ? ` ${endTime}` : '') : undefined })} style={styles.input} />
+            <TextInput value={endDate} placeholder="YYYY-MM-DD" placeholderTextColor={'#ffffffff'} onChangeText={(v) => onChange({ endAt: v ? v + (endTime ? ` ${endTime}` : '') : undefined })} style={styles.input} />
           </View>
           <View style={styles.col}>
             <Text style={styles.label}>Bis (Uhrzeit, optional)</Text>
-            <TextInput value={endTime} placeholder="HH:mm" placeholderTextColor={'#95959588'} onChangeText={(v) => onChange({ endAt: endDate ? endDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
+            <TextInput value={endTime} placeholder="HH:mm" placeholderTextColor={'#ffffffff'} onChangeText={(v) => onChange({ endAt: endDate ? endDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
           </View>
         </View>
       </View>
@@ -741,7 +743,7 @@ export default function Tasklist() {
             )}
           </View>
           <TouchableOpacity onPress={() => deleteTask(t.id)} style={[styles.iconBtn, styles.ml8]}>
-            <Ionicons name="trash-outline" size={16} color="#6B7280" />
+            <Ionicons name="trash-outline" size={16} color="#ffffffff" />
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -752,9 +754,9 @@ export default function Tasklist() {
     <View style={styles.container}>
       <Text style={styles.h1}>Aufgaben</Text>
 
-      <View style={styles.row}>
+      <View style={styles.row }>
         <View style={[styles.col, styles.mr8]}>
-          <SimpleDropdown data={lists} selectedId={selectedListId} onChange={(val) => setSelectedListId(val)} placeholder="Liste wählen…" />
+          <SimpleDropdown data={lists} selectedId={selectedListId} onChange={(val) => setSelectedListId(val)} placeholder="Liste wählen…" style={{ color: '#FFFFFF' }} />
         </View>
         <TouchableOpacity onPress={deleteCurrentList} style={styles.iconBtn}>
           <Text style={styles.iconBtnText}>🗑️ Liste</Text>
@@ -785,6 +787,7 @@ export default function Tasklist() {
               placeholder="Name der Liste"
               placeholderTextColor={'#95959588'}
               value={addListName}
+              
               onChangeText={setAddListName}
               autoFocus
             />
@@ -935,8 +938,8 @@ export default function Tasklist() {
           <View style={styles.modalCard}>
             <View style={{ padding: 12 }}>
               <Text style={styles.h2}>Aufgabe erstellen</Text>
-              <TextInput placeholder="Titel" placeholderTextColor={'#95959588'} value={taskTitle} onChangeText={setTaskTitle} style={styles.input} />
-              <TextInput placeholder="Beschreibung" placeholderTextColor={'#95959588'} value={taskDesc} onChangeText={setTaskDesc} style={[styles.input, { minHeight: 40 }]} multiline />
+              <TextInput placeholder="Titel" placeholderTextColor={'#000000ff'} value={taskTitle} onChangeText={setTaskTitle} style={styles.input} />
+              <TextInput placeholder="Beschreibung" placeholderTextColor={'#000000ff'} value={taskDesc} onChangeText={setTaskDesc} style={[styles.input, { minHeight: 40 }]} multiline />
               <PrioritySelector value={taskPriority} onChange={setTaskPriority} />
               <DateRangeInputs
                 startAt={taskStart}
@@ -1019,7 +1022,7 @@ export default function Tasklist() {
 
 // --- Styles ---
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: Platform.select({ ios: 12, android: 8 }), paddingHorizontal: 12 },
+  container: { flex: 1, paddingTop: Platform.select({ ios: 12, android: 8 }), paddingHorizontal: 12, backgroundColor: '#112a37' },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   flagIcon: { width: 14, height: 14, marginLeft: 6 },
 
@@ -1042,7 +1045,7 @@ const styles = StyleSheet.create({
   // Card style for modal content
   modalCard: { 
     width: '90%', 
-    backgroundColor: '#fff', 
+    backgroundColor: '#ffffffff', 
     borderRadius: 12, 
     borderWidth: 1, 
     borderColor: '#E5E7EB', 
@@ -1059,7 +1062,7 @@ const styles = StyleSheet.create({
   mr8: { marginRight: 8 },
   ml8: { marginLeft: 8 },
 
-  h1: { fontSize: 22, fontWeight: '700', marginVertical: 20, bottom: -10 },
+  h1: { fontSize: 22, fontWeight: '700', marginVertical: 20, bottom: -10, color: '#FFFFFF' },
   h2: { fontSize: 18, fontWeight: '600', marginTop: 8, marginBottom: 6 },
 
   row: { flexDirection: 'row' },
@@ -1124,17 +1127,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     marginBottom: 8,
-      },
-  label: { fontSize: 12, color: '#6B7280', marginBottom: 4 },
+    color: '#000000ff',
+  },
+  label: { fontSize: 12, color: '#000000ff', marginBottom: 4 },
 
-  btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start' },
+  btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start'},
   btnLinkTextAddTask: { color: '#2563EB', fontWeight: '700', bottom: -10 },
   btnLinkText: { color: '#2563EB', fontWeight: '700' },
   btnLinkTextAdd: { color: '#2563EB', fontWeight: '700', top: -10 },
-  btnLinkTextCancel: { color: '#6B7280', fontWeight: '600',  top: -10},
-  btnLinkTextMuted: { color: '#6B7280', fontWeight: '600' },
+  btnLinkTextCancel: { color: '#000000ff', fontWeight: '600',  top: -10},
+  btnLinkTextMuted: { color: '#000000ff', fontWeight: '600' },
 
-  muted: { color: '#6B7280', marginVertical: 6, bottom: -20 },
+  muted: { color: '#000000ff', marginVertical: 6, bottom: -20 },
 
   card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10, backgroundColor: '#FFFFFF' },
 
@@ -1150,11 +1154,11 @@ const styles = StyleSheet.create({
 
   taskRow: { flexDirection: 'row' },
 
-  taskTitle: { fontSize: 16, fontWeight: '700' },
+  taskTitle: { fontSize: 16, fontWeight: '700', color: '#ffffffff' },
   taskDesc: { fontSize: 13, color: '#374151', marginTop: 2 },
 
   meta: { fontSize: 12, color: '#6B7280', marginTop: 4 },
-  metaStrong: { fontSize: 12, color: '#111827', marginBottom: 6, fontWeight: '600' },
+  metaStrong: { fontSize: 12, color: '#ffffffff', marginBottom: 6, fontWeight: '600' },
 
   checkbox: {
     width: 24,
