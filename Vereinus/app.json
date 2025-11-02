@@ -4,9 +4,9 @@
     "slug": "Vereinus",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/vereinus_logo_transparent1.png",
+    "icon": "./assets/images/vereinus_logo1.png",
     "scheme": "vereinus",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
@@ -33,9 +33,9 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#112a37",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#112a37"
           }
         }
       ]
