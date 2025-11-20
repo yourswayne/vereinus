@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
+
 type Screen = 'home' | 'ankuendigung' | 'chat' | 'uebungen' | 'aufgaben';
 
 export default function Home() {
@@ -19,7 +20,7 @@ export default function Home() {
   // Chat input auto-grow up to a limit, then scroll
   const MIN_CHAT_INPUT_HEIGHT = 56;
   const MAX_CHAT_INPUT_HEIGHT = 120;
-  const TAB_BAR_HEIGHT = 56; // Keep input above native tab bar
+  const TAB_BAR_HEIGHT = 20; // Keep input above native tab bar
   const [chatInputHeight, setChatInputHeight] = useState<number>(MIN_CHAT_INPUT_HEIGHT);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [, setKeyboardHeight] = useState(0);
@@ -59,6 +60,17 @@ export default function Home() {
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [renameGroupName, setRenameGroupName] = useState('');
   const groupsReqRef = useRef(0);
+
+  const currentOrg = useMemo(() => orgs.find(o => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
+  const roleLabel = useMemo(() => {
+    if (orgRole === 'director') return 'Direktor';
+    if (orgRole === 'teacher') return 'Lehrer';
+    if (orgRole === 'student') return 'Schüler';
+    return null;
+  }, [orgRole]);
+  const canCreateAnnouncement = useMemo(() => {
+    return !!(sessionUserId && (orgRole === 'teacher' || orgRole === 'director') && selectedOrgId);
+  }, [sessionUserId, orgRole, selectedOrgId]);
 
   useEffect(() => {
     let alive = true;
@@ -306,12 +318,13 @@ export default function Home() {
   if (screen === 'ankuendigung') {
     return (
       <SafeAreaView style={[styles.container, { justifyContent: 'flex-start' }, containerPaddings]}>
-        <View style={styles.chatHeader}>
+        <View style={styles.sectionDivider} />
+        <View style={[styles.chatHeader, styles.chatHeaderNoBorder]}>
           <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, {bottom: 60}]}>
             <Ionicons name="chevron-back" size={22} color="#194055" />
             
           </TouchableOpacity>
-          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Ankündigungen</Text>
+          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankündigungen</Text>
           <View style={{ width: 60 }} />
 
             {!!groups.length && (
@@ -322,11 +335,12 @@ export default function Home() {
         </View>
 
         <FlatList
+          style={{ width: '100%', maxWidth: 720 }}
           data={annRemote}
           keyExtractor={(x) => x.id}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24, width: '100%', maxWidth: 360 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24, width: '100%' }}
           renderItem={({ item }) => (
-            <View style={styles.card}> 
+            <View style={[styles.card, styles.announcementCard]}> 
               <Text style={styles.annTitle}>{item.title}</Text>
               <Text style={styles.annMeta}>{item.event_date ? formatDateDE(item.event_date) : 'Ohne Datum'}</Text>
               {!!item.body && <Text style={styles.annBody}>{item.body}</Text>}
@@ -335,8 +349,11 @@ export default function Home() {
           ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
         />
 
-        {(sessionUserId && (orgRole === 'teacher' || orgRole === 'director') && selectedOrgId) && (
-          <TouchableOpacity style={[styles.button, { marginTop: 8 }]} onPress={() => setShowNewAnnouncement(true)}>
+
+
+
+        {canCreateAnnouncement && (
+          <TouchableOpacity style={[styles.button, styles.annButton]} onPress={() => setShowNewAnnouncement(true)}>
             <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
           </TouchableOpacity>
         )}
@@ -345,7 +362,7 @@ export default function Home() {
         <Modal visible={showNewAnnouncement} transparent animationType="fade" onRequestClose={() => setShowNewAnnouncement(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => setShowNewAnnouncement(false)} />
           <View style={styles.modalCenterWrap}>
-            <View style={styles.modalCard}>
+            <View style={[styles.modalCard, styles.orgModalCard]}>
               <View style={{ padding: 12 }}>
                 <Text style={[styles.sectionTitle,  ]}>Ankündigungen</Text>
                 <TextInput style={styles.input} placeholder="Titel" placeholderTextColor={'#95959588'} value={newTitle} onChangeText={setNewTitle} />
@@ -397,11 +414,12 @@ export default function Home() {
     if (chatMode === 'pick') {
       return (
         <SafeAreaView style={[styles.container, { justifyContent: 'flex-start' }, containerPaddings]}>
-          <View style={styles.chatHeader}>
-            <TouchableOpacity onPress={() => setScreen('home')} style={styles.headerBack}>
+          <View style={styles.sectionDivider} />
+          <View style={[styles.chatHeader, styles.chatHeaderNoBorder]}>
+            <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, left: 12 }]}>Kommunikationskanal</Text>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanal</Text>
             <View style={{ width: 60 }} />
           </View>
           <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
@@ -428,7 +446,7 @@ export default function Home() {
                 <View style={{ paddingVertical: 8 }}>
                   <Text style={styles.text}>Keine Gruppen vorhanden.</Text>
                   {(orgRole === 'director') && (
-                    <TouchableOpacity style={[styles.button]} onPress={() => setShowCreateGroup(true)}>
+                    <TouchableOpacity style={[styles.button, styles.centerButton]} onPress={() => setShowCreateGroup(true)}>
                       <Text style={styles.buttonText}>+ Gruppe erstellen</Text>
                     </TouchableOpacity>
                   )}
@@ -436,7 +454,7 @@ export default function Home() {
               )}
             />
             {(orgRole === 'director' && groups.length > 0) && (
-              <TouchableOpacity style={[styles.button, { marginTop: 8 }]} onPress={() => setShowCreateGroup(true)}>
+              <TouchableOpacity style={[styles.button, styles.centerButton, { marginTop: 8 }]} onPress={() => setShowCreateGroup(true)}>
                 <Text style={styles.buttonText}>+ Gruppe erstellen</Text>
               </TouchableOpacity>
             )}
@@ -512,61 +530,63 @@ export default function Home() {
     );
 
     const bottomGap = keyboardVisible ? 8 : insets.bottom + TAB_BAR_HEIGHT + 8;
-    const chatPaddings = { paddingTop: insets.top + 4, paddingBottom: insets.bottom + 12 };
     return (
-      <KeyboardAvoidingView style={[styles.container, chatPaddings, { justifyContent: 'flex-start' }]} behavior={'padding'}>
-        <View style={styles.chatHeader}>
-          <TouchableOpacity onPress={() => setScreen('home')} style={styles.headerBack}>
-            <Ionicons name="chevron-back" size={22} color="#194055" />
-          </TouchableOpacity>
-          <Text style={[styles.title, { marginBottom: 0, left: 12 }]}>{(groups.find(g => g.id === selectedGroupId)?.name) || 'Chat'}</Text>
-          <View style={{ width: 60 }} />
-        </View>
-        <FlatList
-          style={{ width: '100%', flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, width: '100%', maxWidth: 720 }}
-          data={messages}
-          keyExtractor={(m) => m.id}
-          renderItem={renderItem}
-        />
-        {/* Kanal-Hinweis entfernt: für Director wird automatisch ein Standardkanal erstellt */}
-        <View style={[styles.inputRow, { marginBottom: bottomGap}]}>
-          <TextInput
-            style={[styles.input, { flex: 1, marginBottom: 0, height: chatInputHeight, maxHeight: MAX_CHAT_INPUT_HEIGHT }]}
-            placeholder="Nachricht schreiben…"
-            placeholderTextColor={'#95959588'}
-            value={draft}
-            onChangeText={setDraft}
-            multiline
-            scrollEnabled={chatInputHeight >= MAX_CHAT_INPUT_HEIGHT}
-            textAlignVertical="top"
-            onContentSizeChange={(e) => {
-              const h = Math.ceil(e.nativeEvent.contentSize.height);
-              const next = Math.min(MAX_CHAT_INPUT_HEIGHT, Math.max(MIN_CHAT_INPUT_HEIGHT, h));
-              if (next !== chatInputHeight) setChatInputHeight(next);
-            }}
+      <SafeAreaView style={[styles.chatSafeArea, { paddingTop: insets.top + 12 }]}>
+        <KeyboardAvoidingView style={{ flex: 1, width: '100%', paddingHorizontal: 16 }} behavior={'padding'}>
+          <View style={styles.sectionDivider} />
+          <View style={[styles.chatHeader, styles.chatHeaderNoBorder]}>
+            <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>{(groups.find(g => g.id === selectedGroupId)?.name) || 'Chat'}</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <FlatList
+            style={{ width: '100%', flex: 1 }}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 12, width: '100%', maxWidth: 720 }}
+            data={messages}
+            keyExtractor={(m) => m.id}
+            renderItem={renderItem}
           />
-          <TouchableOpacity
-            style={[styles.sendBtn]}
-            onPress={() => {
-              const txt = draft.trim();
-              if (!txt || !chatChannelId || !sessionUserId) return;
-              (async () => {
-                const { data, error } = await (supabase.from('messages') as any)
-                  .insert({ channel_id: chatChannelId, user_id: sessionUserId, body: txt })
-                  .select('id,user_id,body,created_at')
-                  .single();
-                if (!error && data) {
-                  setMessages((prev: any) => ([...prev, { id: data.id, text: data.body, from: data.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(data.created_at) }]));
-                  setDraft('');
-                }
-              })();
-            }}
-          >
-            <Ionicons name="mail-outline" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+          {/* Kanal-Hinweis entfernt: für Director wird automatisch ein Standardkanal erstellt */}
+          <View style={[styles.inputRow, { marginBottom: bottomGap}]}> 
+            <TextInput
+              style={[styles.input, { flex: 1, marginBottom: 0, height: chatInputHeight, maxHeight: MAX_CHAT_INPUT_HEIGHT }]}
+              placeholder="Nachricht schreiben."
+              placeholderTextColor={'#95959588'}
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              scrollEnabled={chatInputHeight >= MAX_CHAT_INPUT_HEIGHT}
+              textAlignVertical="top"
+              onContentSizeChange={(e) => {
+                const h = Math.ceil(e.nativeEvent.contentSize.height);
+                const next = Math.min(MAX_CHAT_INPUT_HEIGHT, Math.max(MIN_CHAT_INPUT_HEIGHT, h));
+                if (next !== chatInputHeight) setChatInputHeight(next);
+              }}
+            />
+            <TouchableOpacity
+              style={[styles.sendBtn]}
+              onPress={() => {
+                const txt = draft.trim();
+                if (!txt || !chatChannelId || !sessionUserId) return;
+                (async () => {
+                  const { data, error } = await (supabase.from('messages') as any)
+                    .insert({ channel_id: chatChannelId, user_id: sessionUserId, body: txt })
+                    .select('id,user_id,body,created_at')
+                    .single();
+                  if (!error && data) {
+                    setMessages((prev: any) => ([...prev, { id: data.id, text: data.body, from: data.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(data.created_at) }]));
+                    setDraft('');
+                  }
+                })();
+              }}
+            >
+              <Ionicons name="mail-outline" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     );
   }
 
@@ -591,39 +611,22 @@ if (screen === 'aufgaben') {
 // --- Home-Screen mit Buttons ---
   return (
     <SafeAreaView style={[styles.container, containerPaddings]}>
-      
-      <Text style={styles.title}>Vereins Übersicht</Text>
 
-      {(() => {
-        const currentOrg = orgs.find(o => o.id === selectedOrgId);
-        const currentGroup = groups.find(g => g.id === selectedGroupId);
-        return (
-          <View style={[styles.card, { width: '100%', maxWidth: 720, alignItems: 'center' }]}>
-            {!!currentOrg?.logo_url && (
-              <Image source={{ uri: currentOrg.logo_url }} style={{ width: 56, height: 56, borderRadius: 12, marginBottom: 6 }} />
-            )}
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#E5F4EF' }}>{currentOrg?.name ?? 'Kein Verein'}</Text>
-            {!!orgRole && (
-              <View style={{ marginTop: 6 }}>
-                <View style={[styles.badge, styles.badgeActive]}>
-                  <Text style={[styles.badgeTextActive]}>{orgRole === 'director' ? 'Direktor' : orgRole === 'teacher' ? 'Lehrer' : 'Schüler'}</Text>
-                </View>
-              </View>
-            )}
-            {!!currentGroup && (
-              <View style={{ marginTop: 10, alignItems: 'center' }}>
-                {!!(currentGroup as any).image_url && (
-                  <Image source={{ uri: (currentGroup as any).image_url }} style={{ width: 40, height: 40, borderRadius: 10, marginBottom: 4 }} />
-                )}
-                <Text style={{ fontSize: 14, fontWeight: '600' }}>Gruppe: {currentGroup.name}</Text>
-              </View>
-            )}
-            <TouchableOpacity onPress={() => setShowSwitchHome(true)} style={[styles.btnLink, { marginTop: 6 }]}>
-              <Text style={styles.btnLinkText}>Wechseln</Text>
-            </TouchableOpacity>
+      <View style={styles.orgHeader}>
+        <TouchableOpacity
+          onPress={() => setShowSwitchHome(true)}
+          style={styles.orgNamePressable}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.orgNameText}>{currentOrg?.name ?? 'Kein Verein'}</Text>
+          <Ionicons name="chevron-down" size={22} color="#E5F4EF" style={styles.orgNameIcon} />
+        </TouchableOpacity>
+        {!!roleLabel && (
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleBadgeText}>{roleLabel}</Text>
           </View>
-        );
-      })()}
+        )}
+      </View>
       {/* Login-Button entfernt: Auth flow steht jetzt über /login */}
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
@@ -645,41 +648,59 @@ if (screen === 'aufgaben') {
       <Modal visible={showSwitchHome} transparent animationType="fade" onRequestClose={() => setShowSwitchHome(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setShowSwitchHome(false)} />
         <View style={styles.modalCenterWrap}>
-          <View style={styles.modalCard}>
-            <View style={{ padding: 12 }}>
-              <Text style={styles.sectionTitle}>Verein wechseln</Text>
-              <FlatList
-                horizontal
-                data={orgs}
-                keyExtractor={(o) => o.id}
-                renderItem={({ item }) => (
-                  <TouchableOpacity onPress={() => { setSelectedOrgId(item.id); setGroups([]); setSelectedGroupId(null); setChatChannelId(null); setChatMode('pick'); }} onLongPress={() => { if (selectedOrgId !== item.id || orgRole !== 'director') return; Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [{ text: 'Abbrechen', style: 'cancel' }, { text: 'Löschen', style: 'destructive', onPress: async () => { const ok = await deleteOrganisationCascade(item.id); if (ok) await refreshOrgsAndGroups(); } } ]); }} style={[styles.badge, selectedOrgId === item.id && styles.badgeActive]}>
-                    <Text style={[styles.badgeText, selectedOrgId === item.id && styles.badgeTextActive]}>{item.name}</Text>
-                  </TouchableOpacity>
-                )}
-                ListFooterComponent={(<TouchableOpacity onPress={() => { setShowSwitchHome(false); setShowCreateOrg(true); }} style={[styles.badge, { borderColor: '#3D8B77' }]}><Text style={[styles.badgeText, { color: '#194055', fontWeight: '700' }]}>+ Verein</Text></TouchableOpacity>)}
-                style={{ marginBottom: 8 }}
-              />
-              {!!groups.length && (
-                <>
-                  <Text style={styles.label}>Gruppe</Text>
-                  <FlatList horizontal data={groups} keyExtractor={(g) => g.id}
-                    renderItem={({ item }) => (
-                      <TouchableOpacity onPress={() => setSelectedGroupId(item.id)} onLongPress={() => { if (orgRole !== 'director' || selectedOrgId == null) return; if (selectedGroupId !== item.id) return; Alert.alert('Gruppe löschen?', 'Diese Gruppe wird dauerhaft gelöscht.', [{ text: 'Abbrechen', style: 'cancel' }, { text: 'Löschen', style: 'destructive', onPress: async () => { const { error } = await supabase.from('groups').delete().eq('id', item.id); if (error) Alert.alert('Fehler', error.message); else await refreshOrgsAndGroups(); } } ]); }} style={[styles.badge, selectedGroupId === item.id && styles.badgeActive]}>
-                        <Text style={[styles.badgeText, selectedGroupId === item.id && styles.badgeTextActive]}>{item.name}</Text>
-                      </TouchableOpacity>
-                    )}
-                ListFooterComponent={(orgRole === 'director' && selectedOrgId) ? (<TouchableOpacity onPress={() => { setShowSwitchHome(false); setShowCreateGroup(true); }} style={[styles.badge, { borderColor: '#3D8B77' }]}><Text style={[styles.badgeText, { color: '#194055', fontWeight: '700' }]}>+ Gruppe</Text></TouchableOpacity>) : null}
-                  />
-                </>
-              )}
-              <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                <TouchableOpacity style={[styles.btnLink, { marginRight: 8 }]} onPress={() => setShowSwitchHome(false)}>
-                  <Text style={styles.btnLinkText}>OK</Text>
+          <View style={[styles.modalCard, styles.switchModalCard]}>
+            <View style={{ padding: 16, width: '100%' }}>
+              <View style={styles.switchModalHeader}>
+                <TouchableOpacity onPress={() => setShowSwitchHome(false)} style={styles.switchModalBack}>
+                  <Text style={styles.switchModalBackText}>{'<'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.btnLink} onPress={() => setShowSwitchHome(false)}>
-                  <Text style={styles.btnLinkTextMuted}>Schließen</Text>
-                </TouchableOpacity>
+                <Text style={styles.switchModalTitle}>Verein wechseln</Text>
+                <View style={styles.switchModalHeaderSpacer} />
+              </View>
+              <View style={styles.switchModalListWrap}>
+                <FlatList
+                  data={orgs}
+                  keyExtractor={(o) => o.id}
+                  contentContainerStyle={styles.switchModalList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSelectedOrgId(item.id);
+                        setGroups([]);
+                        setSelectedGroupId(null);
+                        setChatChannelId(null);
+                        setChatMode('pick');
+                        setShowSwitchHome(false);
+                      }}
+                      onLongPress={() => {
+                        if (selectedOrgId !== item.id || orgRole !== 'director') return;
+                        Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [
+                          { text: 'Abbrechen', style: 'cancel' },
+                          {
+                            text: 'Löschen',
+                            style: 'destructive',
+                            onPress: async () => {
+                              const ok = await deleteOrganisationCascade(item.id);
+                              if (ok) await refreshOrgsAndGroups();
+                            }
+                          }
+                        ]);
+                      }}
+                      style={[styles.orgSwitchButton, selectedOrgId === item.id && styles.orgSwitchButtonActive]}
+                    >
+                      <Text style={styles.orgSwitchButtonText}>{item.name}</Text>
+                    </TouchableOpacity>
+                  )}
+                  ListFooterComponent={(
+                    <TouchableOpacity
+                      onPress={() => { setShowSwitchHome(false); setShowCreateOrg(true); }}
+                      style={[styles.orgSwitchButton, styles.createOrgButton]}
+                    >
+                      <Text style={[styles.orgSwitchButtonText, styles.createOrgButtonText]}>+ Verein</Text>
+                    </TouchableOpacity>
+                  )}
+                  showsVerticalScrollIndicator={false}
+                />
               </View>
             </View>
           </View>
@@ -749,9 +770,30 @@ if (screen === 'aufgaben') {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: '#112a37' },
+  chatSafeArea: { flex: 1, backgroundColor: '#112a37' },
   title: { fontSize: 22, fontWeight: '600', marginBottom: 20, color: '#E5F4EF' },
+  orgHeader: { width: '100%', maxWidth: 720, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  orgNamePressable: { flexDirection: 'row', alignItems: 'center' },
+  orgNameText: { fontSize: 40, fontWeight: '800', color: '#E5F4EF' },
+  orgNameIcon: { marginLeft: 6 },
+  roleBadge: { backgroundColor: '#194055', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6 },
+  roleBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' },
+  switchModalCard: { backgroundColor: '#194055', borderColor: '#194055' },
+  switchModalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  switchModalBack: { width: 32, paddingVertical: 4, alignItems: 'flex-start' },
+  switchModalBackText: { color: '#E5F4EF', fontSize: 20, fontWeight: '900' },
+  switchModalHeaderSpacer: { width: 32 },
+  switchModalTitle: { flex: 1, textAlign: 'center', color: '#E5F4EF', fontSize: 18, fontWeight: '700' },
+  switchModalListWrap: { maxHeight: 360, marginTop: 8, width: '100%', paddingHorizontal: 6 },
+  switchModalList: { paddingVertical: 4, paddingHorizontal: 4 },
+  orgSwitchButton: { paddingVertical: 16, paddingHorizontal: 18, borderRadius: 28, borderWidth: 1, borderColor: '#3D8B77', backgroundColor: '#215C4A', marginBottom: 10 },
+  orgSwitchButtonActive: { backgroundColor: '#2F7A60', borderColor: '#2F7A60' },
+  orgSwitchButtonText: { color: '#E5F4EF', fontWeight: '700', fontSize: 16 },
+  createOrgButton: { borderStyle: 'dashed', backgroundColor: 'transparent' },
+  createOrgButtonText: { color: '#9FE1C7' },
+  annButton: { marginTop: 12, marginBottom: 12, alignSelf: 'center' },
   text: { fontSize: 16, textAlign: 'center', marginBottom: 20, color: '#E5F4EF' },
-  sectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 8 },
+  sectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 8, color: '#E5F4EF' },
 
   label: { fontSize: 14, fontWeight: '600', marginBottom: 6 },
 
@@ -769,6 +811,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3.5,
     elevation: 4,                 // Schatten für Android
   },
+  centerButton: { alignSelf: 'center' },
 
   // Button-Text
   buttonText: {
@@ -798,34 +841,33 @@ const styles = StyleSheet.create({
 
   // Cards & inputs
   card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', marginBottom: 10, backgroundColor: '#112a37', width: '100%' },
+  announcementCard: { minHeight: 150, justifyContent: 'space-between' },
   annTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4, color: '#E5F4EF' },
   annMeta: { fontSize: 12, color: '#000000ff', marginBottom: 6 },
   annBody: { fontSize: 14, color: '#E5F4EF' },
   input: { borderWidth: 1, borderColor: '#2A3E48', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, color: '#E5F4EF', backgroundColor: '#0F2530' },
   inputMultiline: { height: 44 },
   textarea: { height: 120 },
-  badge: { paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 999, marginRight: 8 },
-  badgeActive: { backgroundColor: '#194055', borderColor: '#194055' },
-  badgeText: { color: '#000000ff', fontWeight: '600' },
   // Flat menu buttons with separators
   menuBtn: {
-
-    width: '109%',
-    paddingVertical: 14,
+    width: '100%',
+    alignSelf: 'stretch',
+    paddingVertical: 16,
     alignItems: 'center',
     marginVertical: 6,
-    borderTopWidth: 2,
-    borderBottomWidth: 2,
+    borderWidth: 2,
     borderColor: '#3D8B77',
+    borderRadius: 18,
+    backgroundColor: '#112a37',
   },
   menuBtnText: { color: '#E8F3F0', fontSize: 18, fontWeight: '600' },
-  badgeTextActive: { color: '#fff', fontWeight: '700' },
   circlePlaceholder: { width: 64, height: 64, borderRadius: 999, backgroundColor: '#184B3D', alignItems: 'center', justifyContent: 'center' },
 
   // Modal helpers
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.2)' },
   modalCenterWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  modalCard: { width: '90%', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 6 },
+  modalCard: { width: '90%', backgroundColor: '#194055', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 6 },
+  orgModalCard: { backgroundColor: '#0f2533', borderColor: '#3D8B77' },
   btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start' },
   btnLinkText: { color: '#2563EB', fontWeight: '700' },
   btnLinkTextMuted: { color: '#6B7280', fontWeight: '600' },
@@ -840,6 +882,8 @@ const styles = StyleSheet.create({
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', width: '100%', maxWidth: 720, marginTop: 1, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#2A3E48' },
   sendBtn: { paddingVertical: 14, paddingHorizontal: 16, marginLeft: 8, backgroundColor: '#194055', borderRadius: 12, alignItems: 'center', justifyContent: 'center'  },
   chatHeader: { width: '100%', maxWidth: 720, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 1, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2A3E48' },
+  chatHeaderNoBorder: { borderBottomWidth: 0 },
+  sectionDivider: { width: '100%', maxWidth: 720, height: StyleSheet.hairlineWidth, backgroundColor: '#2A3E48', marginBottom: 8 },
   headerBack: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingVertical: 4 },
   headerBackText: { color: '#194055', fontWeight: '600', marginLeft: 2 },
 });
@@ -856,3 +900,6 @@ const formatDateDE = (iso: string) => {
   if (isNaN(d.getTime())) return iso;
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 };
+
+
+
