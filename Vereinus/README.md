@@ -48,3 +48,14 @@ Join our community of developers creating universal apps.
 
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+
+## Supabase setup
+
+The app uses several RPC functions (e.g. `create_invite`, `create_organisation_as_director`) that rely on the helper function `public.has_org_role`.  
+If you see the database error `function public.has_org_role(uuid, text[]) does not exist` when generating invite codes, run the SQL in `supabase/has_org_role.sql` inside your Supabase project's SQL editor or via the CLI:
+
+```bash
+supabase db remote commit -f supabase/has_org_role.sql
+```
+
+This defines the function with the signature Postgres expects and grants execute permissions to the `authenticated` role so that the RPCs can call it.
