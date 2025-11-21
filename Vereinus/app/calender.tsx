@@ -15,7 +15,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PinchGestureHandler, State } from 'react-native-gesture-handler';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
+import { useFocusEffect } from '@react-navigation/native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 type CalendarViewMode = 'week' | 'month' | 'year';
@@ -27,6 +29,8 @@ type CalendarEvent = {
   end: string;
   orgId?: string | null;
   scope: 'self' | 'org';
+  readOnly?: boolean;
+  source?: 'local' | 'remote';
 };
 type MonthCell = { date: Date; inMonth: boolean };
 type EventDraft = {
@@ -124,7 +128,9 @@ export default function Calender() {
   const [referenceDate, setReferenceDate] = useState(new Date());
   const [hourHeight, setHourHeight] = useState(INITIAL_HOUR_HEIGHT);
   const pinchStartHeight = useRef(hourHeight);
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [localEvents, setLocalEvents] = useState<CalendarEvent[]>([]);
+  const [remoteEvents, setRemoteEvents] = useState<CalendarEvent[]>([]);
+  const events = useMemo(() => [...remoteEvents, ...localEvents], [remoteEvents, localEvents]);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [pickerYear, setPickerYear] = useState(referenceDate.getFullYear());
   const [eventModalVisible, setEventModalVisible] = useState(false);
@@ -186,6 +192,89 @@ export default function Calender() {
       alive = false;
     };
   }, []);
+
+  const refreshRemoteEvents = useCallback(async () => {
+    if (!orgs.length) {
+      setRemoteEvents([]);
+      return;
+    }
+    const orgIds = orgs.map((org) => org.id);
+    const rangeStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rangeEnd = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+    const { data, error } = await supabase
+      .from('calendar_sync_queue')
+      .select('id,event_payload,org_id,created_at')
+      .in('org_id', orgIds)
+      .order('created_at', { ascending: true });
+    if (error) {
+      setRemoteEvents([]);
+      return;
+    }
+    const eventsMap = new Map<string, CalendarEvent>();
+    (data ?? []).forEach((row: any) => {
+      const payload = (row.event_payload ?? null) as {
+        id?: string;
+        title?: string;
+        description?: string | null;
+          start?: string;
+          end?: string;
+          orgId?: string | null;
+          scope?: 'self' | 'org';
+        } | null;
+        if (!payload?.start) return null;
+        const start = new Date(payload.start);
+        if (Number.isNaN(start.getTime())) return null;
+        if (start < rangeStart || start > rangeEnd) return null;
+        let end = payload.end ? new Date(payload.end) : null;
+        if (!end || Number.isNaN(end.getTime())) end = new Date(start.getTime() + 60 * 60 * 1000);
+        const baseId = payload.id ?? `remote-${row.id}`;
+        const event: CalendarEvent = {
+          id: baseId,
+          title: payload.title ?? 'Termin',
+          description: payload.description ?? '',
+          start: start.toISOString(),
+          end: end.toISOString(),
+          orgId: payload.orgId ?? row.org_id ?? null,
+          scope: payload.scope ?? 'org',
+          readOnly: true,
+          source: 'remote',
+        };
+        eventsMap.set(baseId, event);
+      });
+    setRemoteEvents(Array.from(eventsMap.values()));
+  }, [orgs]);
+
+  useEffect(() => {
+    refreshRemoteEvents();
+  }, [refreshRemoteEvents]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshRemoteEvents();
+    }, [refreshRemoteEvents]),
+  );
+
+  useEffect(() => {
+    if (!orgs.length) return undefined;
+    const orgSet = new Set(orgs.map((org) => org.id));
+    if (!orgSet.size) return undefined;
+    const channel = supabase
+      .channel('calendar-sync-all')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'calendar_sync_queue' },
+        (payload: { new?: { org_id?: string | null } | null; old?: { org_id?: string | null } | null }) => {
+          const targetOrg = (payload.new?.org_id ?? payload.old?.org_id) as string | null;
+          if (targetOrg && orgSet.has(targetOrg)) {
+            refreshRemoteEvents();
+          }
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [orgs, refreshRemoteEvents]);
 
   const panResponder = useMemo(
     () =>
@@ -267,8 +356,10 @@ export default function Calender() {
       end: eventDraft.end.toISOString(),
       orgId: eventDraft.orgId,
       scope: eventDraft.scope,
+      readOnly: false,
+      source: 'local',
     };
-    setEvents((prev) =>
+    setLocalEvents((prev) =>
       editingEventId ? prev.map((evt) => (evt.id === eventId ? payload : evt)) : [...prev, payload],
     );
     // close event modal inline to avoid referencing a callback declared later
@@ -340,7 +431,7 @@ export default function Calender() {
   }, []);
 
   const handleEditFromDetail = useCallback(() => {
-    if (!eventDetail) return;
+    if (!eventDetail || eventDetail.readOnly) return;
     beginEditEvent(eventDetail);
     setEventDetail(null);
   }, [beginEditEvent, eventDetail]);
@@ -678,9 +769,11 @@ export default function Calender() {
             <View style={styles.eventDetailHeader}>
               <Text style={styles.eventDetailTitle}>{eventDetail?.title}</Text>
               <View style={styles.eventDetailHeaderButtons}>
-                <TouchableOpacity style={styles.eventDetailButton} onPress={handleEditFromDetail}>
-                  <Text style={styles.eventDetailButtonText}>Bearbeiten</Text>
-                </TouchableOpacity>
+                {!eventDetail?.readOnly && (
+                  <TouchableOpacity style={styles.eventDetailButton} onPress={handleEditFromDetail}>
+                    <Text style={styles.eventDetailButtonText}>Bearbeiten</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={styles.eventDetailButton} onPress={closeEventDetail}>
                   <Text style={styles.eventDetailButtonText}>Schließen</Text>
                 </TouchableOpacity>
@@ -1334,4 +1427,5 @@ const styles = StyleSheet.create({
     color: '#0a1c27',
     fontWeight: '600',
   },
-});
+}); 
+

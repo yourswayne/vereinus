@@ -358,21 +358,21 @@ const DateRangeInputs = ({
         <View style={styles.row}>
           <View style={[styles.col, styles.mr8]}>
             <Text style={styles.label}>Von (Datum)</Text>
-            <TextInput value={startDate} placeholder="YYYY-MM-DD" placeholderTextColor={'rgba(255, 255, 255, 1)'} onChangeText={(v) => onChange({ startAt: v ? v + (startTime ? ` ${startTime}` : '') : undefined })} style={styles.input} />
+            <TextInput value={startDate} placeholder="YYYY-MM-DD" placeholderTextColor={'#9CA3AF'} onChangeText={(v) => onChange({ startAt: v ? v + (startTime ? ` ${startTime}` : '') : undefined })} style={styles.input} />
           </View>
           <View style={styles.col}>
             <Text style={styles.label}>Von (Uhrzeit, optional)</Text>
-            <TextInput value={startTime} placeholder="HH:mm" placeholderTextColor={'#ffffffff'} onChangeText={(v) => onChange({ startAt: startDate ? startDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
+            <TextInput value={startTime} placeholder="HH:mm" placeholderTextColor={'#9CA3AF'} onChangeText={(v) => onChange({ startAt: startDate ? startDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
           </View>
         </View>
         <View style={styles.row}>
           <View style={[styles.col, styles.mr8]}>
             <Text style={styles.label}>Bis (Datum)</Text>
-            <TextInput value={endDate} placeholder="YYYY-MM-DD" placeholderTextColor={'#ffffffff'} onChangeText={(v) => onChange({ endAt: v ? v + (endTime ? ` ${endTime}` : '') : undefined })} style={styles.input} />
+            <TextInput value={endDate} placeholder="YYYY-MM-DD" placeholderTextColor={'#9CA3AF'} onChangeText={(v) => onChange({ endAt: v ? v + (endTime ? ` ${endTime}` : '') : undefined })} style={styles.input} />
           </View>
           <View style={styles.col}>
             <Text style={styles.label}>Bis (Uhrzeit, optional)</Text>
-            <TextInput value={endTime} placeholder="HH:mm" placeholderTextColor={'#ffffffff'} onChangeText={(v) => onChange({ endAt: endDate ? endDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
+            <TextInput value={endTime} placeholder="HH:mm" placeholderTextColor={'#9CA3AF'} onChangeText={(v) => onChange({ endAt: endDate ? endDate + (v ? ` ${v}` : '') : undefined })} style={styles.input} />
           </View>
         </View>
       </View>
@@ -390,7 +390,7 @@ const DateRangeInputs = ({
         <View style={[styles.col, styles.mr8]}>
           <Text style={styles.label}>Von Datum</Text>
           <TouchableOpacity onPress={() => openDate('start')} style={styles.input}>
-            <Text>{startDateLabel}</Text>
+            <Text style={[styles.inputText, !startAt && styles.inputPlaceholder]}>{startDateLabel}</Text>
           </TouchableOpacity>
           {!!startAt?.includes(' ') && (
             <TouchableOpacity onPress={() => clearTimePart('start')} style={styles.btnLink}>
@@ -401,7 +401,7 @@ const DateRangeInputs = ({
         <View style={styles.col}>
           <Text style={styles.label}>Von Uhrzeit (optional)</Text>
           <TouchableOpacity onPress={() => openTime('start')} style={styles.input}>
-            <Text style={{ color: startAt ? '#111827' : '#6B7280' }}>{startTimeLabel}</Text>
+            <Text style={[styles.inputText, (!startAt || !startAt.includes(' ')) && styles.inputPlaceholder]}>{startTimeLabel}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -410,7 +410,7 @@ const DateRangeInputs = ({
         <View style={[styles.col, styles.mr8]}>
           <Text style={styles.label}>Bis Datum</Text>
           <TouchableOpacity onPress={() => openDate('end')} style={styles.input}>
-            <Text>{endDateLabel}</Text>
+            <Text style={[styles.inputText, !endAt && styles.inputPlaceholder]}>{endDateLabel}</Text>
           </TouchableOpacity>
           {!!endAt?.includes(' ') && (
             <TouchableOpacity onPress={() => clearTimePart('end')} style={styles.btnLink}>
@@ -421,7 +421,7 @@ const DateRangeInputs = ({
         <View style={styles.col}>
           <Text style={styles.label}>Bis Uhrzeit (optional)</Text>
           <TouchableOpacity onPress={() => openTime('end')} style={styles.input}>
-            <Text style={{ color: endAt ? '#111827' : '#6B7280' }}>{endTimeLabel}</Text>
+            <Text style={[styles.inputText, (!endAt || !endAt.includes(' ')) && styles.inputPlaceholder]}>{endTimeLabel}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -938,8 +938,8 @@ export default function Tasklist() {
           <View style={styles.modalCard}>
             <View style={{ padding: 12 }}>
               <Text style={styles.h2}>Aufgabe erstellen</Text>
-              <TextInput placeholder="Titel" placeholderTextColor={'#000000ff'} value={taskTitle} onChangeText={setTaskTitle} style={styles.input} />
-              <TextInput placeholder="Beschreibung" placeholderTextColor={'#000000ff'} value={taskDesc} onChangeText={setTaskDesc} style={[styles.input, { minHeight: 40 }]} multiline />
+              <TextInput placeholder="Titel" placeholderTextColor={'#9CA3AF'} value={taskTitle} onChangeText={setTaskTitle} style={styles.input} />
+              <TextInput placeholder="Beschreibung" placeholderTextColor={'#9CA3AF'} value={taskDesc} onChangeText={setTaskDesc} style={[styles.input, { minHeight: 40 }]} multiline />
               <PrioritySelector value={taskPriority} onChange={setTaskPriority} />
               <DateRangeInputs
                 startAt={taskStart}
@@ -1033,7 +1033,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(7, 15, 23, 0.75)',
   },
 
   // Center modal content vertically and horizontally
@@ -1041,21 +1041,22 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 16,
   },
   // Card style for modal content
-  modalCard: { 
-    width: '90%', 
-    backgroundColor: '#ffffffff', 
-    borderRadius: 12, 
-    borderWidth: 1, 
-    borderColor: '#E5E7EB', 
-    maxHeight: 520, 
-    flexShrink: 1, 
-    shadowColor: '#000', 
-    shadowOffset: { width: 0, height: 3 }, 
-    shadowOpacity: 0.2, 
-    shadowRadius: 6, 
-    elevation: 6 
+  modalCard: {
+    width: '92%',
+    backgroundColor: '#0F2530',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A3E48',
+    maxHeight: 560,
+    flexShrink: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    elevation: 12,
   },
 
   mr6: { marginRight: 6 },
@@ -1063,7 +1064,7 @@ const styles = StyleSheet.create({
   ml8: { marginLeft: 8 },
 
   h1: { fontSize: 22, fontWeight: '700', marginVertical: 20, bottom: -10, color: '#FFFFFF' },
-  h2: { fontSize: 18, fontWeight: '600', marginTop: 8, marginBottom: 6 },
+  h2: { fontSize: 18, fontWeight: '600', marginTop: 8, marginBottom: 6, color: '#E5F4EF' },
 
   row: { flexDirection: 'row' },
   col: { flex: 1 },
@@ -1122,23 +1123,26 @@ const styles = StyleSheet.create({
 
   input: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderColor: '#2A3E48',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 8,
-    color: '#000000ff',
+    backgroundColor: '#112a37',
+    color: '#E5F4EF',
   },
-  label: { fontSize: 12, color: '#000000ff', marginBottom: 4 },
+  inputText: { color: '#E5F4EF' },
+  inputPlaceholder: { color: '#8EA3B2' },
+  label: { fontSize: 12, color: '#9CA3AF', marginBottom: 4 },
 
-  btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start'},
-  btnLinkTextAddTask: { color: '#2563EB', fontWeight: '700', bottom: -10 },
-  btnLinkText: { color: '#2563EB', fontWeight: '700' },
-  btnLinkTextAdd: { color: '#2563EB', fontWeight: '700', top: -10 },
-  btnLinkTextCancel: { color: '#000000ff', fontWeight: '600',  top: -10},
-  btnLinkTextMuted: { color: '#000000ff', fontWeight: '600' },
+  btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start' },
+  btnLinkTextAddTask: { color: '#9AD0C1', fontWeight: '700', bottom: -10 },
+  btnLinkText: { color: '#9AD0C1', fontWeight: '700' },
+  btnLinkTextAdd: { color: '#9AD0C1', fontWeight: '700', top: -10 },
+  btnLinkTextCancel: { color: '#C7D2D6', fontWeight: '600', top: -10 },
+  btnLinkTextMuted: { color: '#C7D2D6', fontWeight: '600' },
 
-  muted: { color: '#000000ff', marginVertical: 6, bottom: -20 },
+  muted: { color: '#9CA3AF', marginVertical: 6, bottom: -20 },
 
   card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10, backgroundColor: '#FFFFFF' },
 

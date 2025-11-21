@@ -1,5 +1,7 @@
-﻿import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert } from 'react-native';
+﻿import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView } from 'react-native';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { GestureResponderEvent } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,6 +10,25 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
 
 type Screen = 'home' | 'ankuendigung' | 'chat' | 'uebungen' | 'aufgaben';
+type AnnouncementRow = { id: string; title: string; body: string | null; event_date: string | null };
+type CalendarEventPayload = {
+  id: string;
+  title: string;
+  description?: string | null;
+  start: string;
+  end: string;
+  orgId?: string | null;
+  scope: 'self' | 'org';
+  source?: 'announcement' | 'task' | 'manual';
+  announcementId?: string | null;
+};
+type OrgMemberRow = {
+  userId: string;
+  role: 'director' | 'teacher' | 'student';
+  displayName: string;
+  email: string | null;
+  groupIds: string[];
+};
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>('home');
@@ -44,9 +65,20 @@ export default function Home() {
   const [showSwitchHome, setShowSwitchHome] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const [orgRole, setOrgRole] = useState<'director' | 'teacher' | 'student' | null>(null);
-  const [annRemote, setAnnRemote] = useState<{ id: string; title: string; body: string | null; event_date: string | null }[]>([]);
-  const [loadingRemote, setLoadingRemote] = useState(false);
+const [orgRole, setOrgRole] = useState<'director' | 'teacher' | 'student' | null>(null);
+const [orgRoles, setOrgRoles] = useState<Record<string, 'director' | 'teacher' | 'student'>>({});
+const [annRemote, setAnnRemote] = useState<{ id: string; title: string; body: string | null; event_date: string | null }[]>([]);
+const [loadingRemote, setLoadingRemote] = useState(false);
+const [calendarSyncedAnnouncements, setCalendarSyncedAnnouncements] = useState<Record<string, boolean>>({});
+const getAnnouncementCalendarEventId = (announcementId: string) => `ann-${announcementId}`;
+const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string) => {
+  const legacyPrefix = `${eventId}-`;
+  return [
+    `event_payload->>announcementId.eq.${announcementId}`,
+    `event_payload->>id.eq.${eventId}`,
+    `event_payload->>id.like.${legacyPrefix}%`,
+  ].join(',');
+};
   // --- Chat from Supabase ---
   const [chatChannelId, setChatChannelId] = useState<string | null>(null);
   const [rtSubKey, setRtSubKey] = useState<string | null>(null);
@@ -59,6 +91,16 @@ export default function Home() {
   const [showRenameGroup, setShowRenameGroup] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [renameGroupName, setRenameGroupName] = useState('');
+  const [groupActionTarget, setGroupActionTarget] = useState<{ id: string; name: string } | null>(null);
+  const [orgActionTarget, setOrgActionTarget] = useState<{ id: string; name: string } | null>(null);
+  const [showRenameOrg, setShowRenameOrg] = useState(false);
+  const [renameOrgId, setRenameOrgId] = useState<string | null>(null);
+  const [renameOrgName, setRenameOrgName] = useState('');
+  const [showManageMembers, setShowManageMembers] = useState(false);
+  const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: string } | null>(null);
+  const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([]);
+  const [orgMembersLoading, setOrgMembersLoading] = useState(false);
+  const [orgMemberGroups, setOrgMemberGroups] = useState<{ id: string; name: string }[]>([]);
   const groupsReqRef = useRef(0);
 
   const currentOrg = useMemo(() => orgs.find(o => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
@@ -69,7 +111,7 @@ export default function Home() {
     return null;
   }, [orgRole]);
   const canCreateAnnouncement = useMemo(() => {
-    return !!(sessionUserId && (orgRole === 'teacher' || orgRole === 'director') && selectedOrgId);
+    return !!(sessionUserId && orgRole === 'director' && selectedOrgId);
   }, [sessionUserId, orgRole, selectedOrgId]);
 
   useEffect(() => {
@@ -88,20 +130,22 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       if (!sessionUserId) {
-        setOrgs([]); setGroups([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setAnnRemote([]);
+        setOrgs([]); setGroups([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({}); setAnnRemote([]);
         return;
       }
       // load org memberships and orgs
       const { data: mems } = await supabase.from('organisation_members').select('org_id, role').eq('user_id', sessionUserId);
       const memsTyped = (mems ?? []) as { org_id: string; role: 'director' | 'teacher' | 'student' }[];
       const orgIds = memsTyped.map(m => m.org_id);
-      if (!orgIds.length) { setOrgs([]); return; }
+      if (!orgIds.length) { setOrgs([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({}); return; }
       const { data: orgRows } = await supabase.from('organisations').select('id, name, logo_url').in('id', orgIds);
       const orgList = (orgRows ?? []) as any[];
       setOrgs(orgList);
       const nextOrg = selectedOrgId && orgIds.includes(selectedOrgId) ? selectedOrgId : (orgList[0]?.id ?? null);
       setSelectedOrgId(nextOrg);
       setOrgRole(memsTyped.find(m => m.org_id === nextOrg)?.role ?? null);
+      const roleMap = memsTyped.reduce((acc, mem) => { acc[mem.org_id] = mem.role; return acc; }, {} as Record<string, 'director' | 'teacher' | 'student'>);
+      setOrgRoles(roleMap);
       if (nextOrg) {
         // defer to fast group loader effect
         setGroups([]); setSelectedGroupId(null);
@@ -112,19 +156,21 @@ export default function Home() {
   }, [sessionUserId]);
   const refreshOrgsAndGroups = async () => {
     if (!sessionUserId) {
-      setOrgs([]); setGroups([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setAnnRemote([]);
+      setOrgs([]); setGroups([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({}); setAnnRemote([]);
       return;
     }
     const { data: mems } = await supabase.from('organisation_members').select('org_id, role').eq('user_id', sessionUserId);
     const memsTyped = (mems ?? []) as { org_id: string; role: 'director' | 'teacher' | 'student' }[];
     const orgIds = memsTyped.map(m => m.org_id);
-    if (!orgIds.length) { setOrgs([]); setSelectedOrgId(null); setGroups([]); setSelectedGroupId(null); setOrgRole(null); return; }
+    if (!orgIds.length) { setOrgs([]); setSelectedOrgId(null); setGroups([]); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({}); return; }
     const { data: orgRows } = await supabase.from('organisations').select('id, name, logo_url').in('id', orgIds);
     const orgList = (orgRows ?? []) as any[];
     setOrgs(orgList);
     const nextOrg = selectedOrgId && orgIds.includes(selectedOrgId) ? selectedOrgId : (orgList[0]?.id ?? null);
     setSelectedOrgId(nextOrg);
     setOrgRole(memsTyped.find(m => m.org_id === nextOrg)?.role ?? null);
+    const roleMap = memsTyped.reduce((acc, mem) => { acc[mem.org_id] = mem.role; return acc; }, {} as Record<string, 'director' | 'teacher' | 'student'>);
+    setOrgRoles(roleMap);
     if (nextOrg) {
       const { data: gm } = await supabase.from('group_members').select('group_id').eq('user_id', sessionUserId);
       const gmTyped = (gm ?? []) as { group_id: string }[];
@@ -202,17 +248,460 @@ export default function Home() {
     }
   };
 
+  const removeGroupLocally = (groupId: string) => {
+    setGroups(prev => prev.filter(g => g.id !== groupId));
+    if (selectedGroupId === groupId) {
+      setSelectedGroupId(null);
+      setChatMode('pick');
+      setChatChannelId(null);
+    }
+  };
+
+  const handleGroupDelete = async (groupId: string) => {
+    const ok = await deleteGroupCascade(groupId);
+    if (ok) removeGroupLocally(groupId);
+  };
+
+  const openGroupActions = (group: { id: string; name: string }) => {
+    if (orgRole !== 'director') return;
+    setGroupActionTarget({ id: group.id, name: group.name });
+  };
+
+  const openOrgActions = (org: { id: string; name: string }) => {
+    if (orgRoles[org.id] !== 'director') return;
+    setShowSwitchHome(false);
+    setOrgActionTarget({ id: org.id, name: org.name });
+  };
+
+  const closeRenameOrgModal = () => {
+    setShowRenameOrg(false);
+    setRenameOrgId(null);
+    setRenameOrgName('');
+  };
+
+  const handleOrgRenameSave = async () => {
+    const id = renameOrgId;
+    const name = renameOrgName.trim();
+    if (!id || !name) return;
+    const { error } = await supabase.from('organisations').update({ name }).eq('id', id);
+    if (error) {
+      Alert.alert('Fehler', error.message);
+      return;
+    }
+    setOrgs((prev) => prev.map((org) => (org.id === id ? { ...org, name } : org)));
+    closeRenameOrgModal();
+  };
+
+  const loadOrgMembers = async (orgId: string) => {
+    setOrgMembersLoading(true);
+    try {
+      const { data: memRows, error: memErr } = await supabase
+        .from('organisation_members')
+        .select('user_id, role')
+        .eq('org_id', orgId);
+      if (memErr) throw memErr;
+      const membersData = (memRows ?? []) as { user_id: string; role: 'director' | 'teacher' | 'student' }[];
+      const userIds = membersData.map((m) => m.user_id);
+      let profileMap: Record<string, { full_name?: string | null; email?: string | null }> = {};
+      if (userIds.length) {
+        try {
+          const { data: profilesRows, error: profilesErr } = await supabase
+            .from('profiles')
+            .select('id, full_name, email')
+            .in('id', userIds);
+          if (!profilesErr) {
+            (profilesRows ?? []).forEach((p: any) => {
+              profileMap[p.id] = { full_name: p.full_name, email: p.email };
+            });
+          }
+        } catch {
+          // ignore missing profiles table
+        }
+      }
+      const { data: groupRows, error: groupErr } = await supabase.from('groups').select('id,name').eq('org_id', orgId);
+      if (groupErr) throw groupErr;
+      const groupList = (groupRows ?? []) as { id: string; name: string }[];
+      setOrgMemberGroups(groupList);
+      let groupMemberships: { user_id: string; group_id: string }[] = [];
+      const groupIds = groupList.map((g) => g.id);
+      if (groupIds.length) {
+        const { data: gmRows, error: gmErr } = await supabase
+          .from('group_members')
+          .select('group_id,user_id')
+          .in('group_id', groupIds);
+        if (gmErr) throw gmErr;
+        groupMemberships = (gmRows ?? []) as { group_id: string; user_id: string }[];
+      }
+      const mapped: OrgMemberRow[] = membersData.map((member) => {
+        const profile = profileMap[member.user_id];
+        const displayName = profile?.full_name || profile?.email || `Mitglied ${member.user_id.slice(0, 6)}`;
+        const groupsForMember = groupMemberships
+          .filter((gm) => gm.user_id === member.user_id)
+          .map((gm) => gm.group_id);
+        return {
+          userId: member.user_id,
+          role: member.role,
+          displayName,
+          email: profile?.email ?? null,
+          groupIds: groupsForMember,
+        };
+      });
+      setOrgMembers(mapped);
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Mitglieder konnten nicht geladen werden.');
+    } finally {
+      setOrgMembersLoading(false);
+    }
+  };
+
+  const openManageMembers = (org: { id: string; name: string }) => {
+    if (orgRoles[org.id] !== 'director') return;
+    setManageMembersOrg(org);
+    setShowManageMembers(true);
+    loadOrgMembers(org.id);
+  };
+
+  const closeManageMembers = () => {
+    setShowManageMembers(false);
+    setManageMembersOrg(null);
+    setOrgMembers([]);
+    setOrgMemberGroups([]);
+  };
+
+  const toggleMemberGroup = async (userId: string, groupId: string) => {
+    if (!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') return;
+    const member = orgMembers.find((m) => m.userId === userId);
+    if (!member) return;
+    const assigned = member.groupIds.includes(groupId);
+    try {
+      if (assigned) {
+        await supabase.from('group_members').delete().match({ group_id: groupId, user_id: userId });
+      } else {
+        await supabase.from('group_members').insert({ group_id: groupId, user_id: userId });
+      }
+      setOrgMembers((prev) =>
+        prev.map((m) =>
+          m.userId === userId
+            ? { ...m, groupIds: assigned ? m.groupIds.filter((id) => id !== groupId) : [...m.groupIds, groupId] }
+            : m,
+        ),
+      );
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Gruppenzuordnung konnte nicht aktualisiert werden.');
+    }
+  };
+
+  const renderMemberCard = (member: OrgMemberRow, canEdit: boolean) => (
+    <View key={`${member.userId}-${member.role}`} style={styles.memberCard}>
+      <View style={{ marginBottom: 6 }}>
+        <Text style={styles.memberName}>{member.displayName}</Text>
+        <Text style={styles.memberEmail}>{member.email ?? member.userId}</Text>
+      </View>
+      {orgMemberGroups.length ? (
+        <View style={styles.memberGroupsRow}>
+          {orgMemberGroups.map((group) => {
+            const assigned = member.groupIds.includes(group.id);
+            return (
+              <TouchableOpacity
+                key={`${member.userId}-${group.id}`}
+                disabled={!canEdit}
+                onPress={() => canEdit && toggleMemberGroup(member.userId, group.id)}
+                style={[
+                  styles.memberGroupChip,
+                  assigned && styles.memberGroupChipActive,
+                  !canEdit && styles.memberGroupChipDisabled,
+                ]}
+              >
+                <Text style={[styles.memberGroupChipText, assigned && styles.memberGroupChipTextActive]}>
+                  {group.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : (
+        <Text style={styles.memberEmptyText}>Keine Gruppen vorhanden.</Text>
+      )}
+    </View>
+  );
+
+  const normalizeAnnouncementDate = (date: Date) => {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
+    return normalized;
+  };
+
+  const toAnnouncementDateString = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+
+  const applyAnnouncementDateValue = (date: Date | null) => {
+    if (!date) {
+      setAnnouncementDate('');
+      setAnnouncementDateObj(null);
+      return;
+    }
+    const normalized = normalizeAnnouncementDate(date);
+    const iso = toAnnouncementDateString(normalized);
+    setAnnouncementDate(iso);
+    setAnnouncementDateObj(normalized);
+  };
+
+  const resetAnnouncementForm = () => {
+    setAnnouncementTitle('');
+    setAnnouncementBody('');
+    setAnnouncementDate('');
+    setAnnouncementDateObj(null);
+    setShowAnnouncementDatePicker(false);
+    setEditingAnnouncementId(null);
+    setAnnouncementCalendarBroadcast(false);
+  };
+
+  const openAnnouncementModal = (mode: 'create' | 'edit', announcement?: AnnouncementRow) => {
+    setAnnouncementModalMode(mode);
+    if (mode === 'edit' && announcement) {
+      setEditingAnnouncementId(announcement.id);
+      setAnnouncementTitle(announcement.title);
+      setAnnouncementBody(announcement.body ?? '');
+      setAnnouncementDate(announcement.event_date ?? '');
+      if (announcement.event_date) {
+        const parsed = new Date(announcement.event_date);
+        if (!Number.isNaN(parsed.getTime())) {
+          setAnnouncementDateObj(normalizeAnnouncementDate(parsed));
+        } else {
+          setAnnouncementDateObj(null);
+        }
+      } else {
+        setAnnouncementDateObj(null);
+      }
+      setAnnouncementCalendarBroadcast(Boolean(calendarSyncedAnnouncements[announcement.id]));
+      setShowAnnouncementDatePicker(false);
+    } else {
+      resetAnnouncementForm();
+    }
+    setAnnouncementModalVisible(true);
+  };
+
+  const closeAnnouncementModal = () => {
+    setAnnouncementModalVisible(false);
+    resetAnnouncementForm();
+  };
+
+  const handleAnnouncementDatePickerChange = (event: DateTimePickerEvent, selected?: Date) => {
+    if (event.type === 'dismissed') {
+      setShowAnnouncementDatePicker(false);
+      return;
+    }
+    if (selected) {
+      applyAnnouncementDateValue(selected);
+    }
+    if (Platform.OS !== 'ios') {
+      setShowAnnouncementDatePicker(false);
+    }
+  };
+
+  const handlePersistAnnouncement = async () => {
+    const title = announcementTitle.trim();
+    const body = announcementBody.trim();
+    const eventDate = announcementDate.trim();
+    if (!title || !selectedOrgId || !sessionUserId) return;
+    const payloadBase = { title, body: body || null, event_date: eventDate || null };
+    const wasSynced = editingAnnouncementId ? Boolean(calendarSyncedAnnouncements[editingAnnouncementId]) : false;
+    try {
+      let savedAnnouncement: AnnouncementRow | null = null;
+      if (announcementModalMode === 'edit' && editingAnnouncementId) {
+        const { data, error } = await supabase
+          .from('announcements')
+          .update(payloadBase)
+          .eq('id', editingAnnouncementId)
+          .select('id,title,body,event_date')
+          .single();
+        if (error) throw error;
+        if (data) {
+          savedAnnouncement = data as AnnouncementRow;
+          setAnnRemote((prev) => prev.map((ann) => (ann.id === data.id ? (data as AnnouncementRow) : ann)));
+        }
+      } else {
+        const payload = {
+          ...payloadBase,
+          org_id: selectedOrgId,
+          group_id: selectedGroupId,
+          author_id: sessionUserId,
+        };
+        const { data, error } = await supabase
+          .from('announcements')
+          .insert(payload as any)
+          .select('id,title,body,event_date')
+          .single();
+        if (error) throw error;
+        if (data) {
+          savedAnnouncement = data as AnnouncementRow;
+          setAnnRemote((prev) => [data as AnnouncementRow, ...prev]);
+        }
+      }
+      if (savedAnnouncement) {
+      if (announcementCalendarBroadcast) {
+        await handleAnnouncementCalendarSync(savedAnnouncement);
+      } else if (wasSynced) {
+        await handleAnnouncementCalendarUnsync(savedAnnouncement);
+      }
+      }
+      closeAnnouncementModal();
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht gespeichert werden.');
+    }
+  };
+
+  const openAnnouncementActions = (announcement: AnnouncementRow) => {
+    if (!canCreateAnnouncement) return;
+    setAnnouncementActionTarget(announcement);
+  };
+
+  const handleAnnouncementCalendarSync = async (announcement: AnnouncementRow) => {
+    if (!selectedOrgId) {
+      Alert.alert('Kalender', 'Bitte waehle zuerst einen Verein aus.');
+      return;
+    }
+    const eventId = getAnnouncementCalendarEventId(announcement.id);
+    const dateStr = announcement.event_date?.trim();
+    if (!dateStr) {
+      Alert.alert('Kalender', 'Diese Ankuendigung hat kein Datum. Bitte fuege zuerst ein Datum hinzu.');
+      return;
+    }
+    const start = new Date(dateStr);
+    if (Number.isNaN(start.getTime())) {
+      Alert.alert('Kalender', 'Das eingetragene Datum ist ungueltig.');
+      return;
+    }
+    if (!dateStr.includes('T')) {
+      start.setHours(9, 0, 0, 0);
+    }
+    const end = new Date(start.getTime());
+    if (end <= start) {
+      end.setHours(start.getHours() + 1);
+    }
+    const payload: CalendarEventPayload = {
+      id: eventId,
+      title: announcement.title,
+      description: announcement.body ?? '',
+      start: start.toISOString(),
+      end: end.toISOString(),
+      orgId: selectedOrgId,
+      scope: 'org',
+      source: 'announcement',
+      announcementId: announcement.id,
+    };
+    setCalendarQueueBusy(true);
+    try {
+      const filter = buildAnnouncementCalendarFilter(announcement.id, eventId);
+      await supabase
+        .from('calendar_sync_queue')
+        .delete()
+        .eq('org_id', selectedOrgId)
+        .or(filter);
+
+      const { error } = await supabase.from('calendar_sync_queue').insert({
+        org_id: selectedOrgId,
+        event_payload: payload,
+      });
+      if (error) throw error;
+      Alert.alert('Kalender', 'Termin wurde für alle in den Kalender eingetragen.');
+      setCalendarSyncedAnnouncements((prev) => ({ ...prev, [announcement.id]: true }));
+    } catch (e: any) {
+      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht übertragen werden.');
+    } finally {
+      setCalendarQueueBusy(false);
+    }
+  };
+  const handleAnnouncementCalendarUnsync = async (announcement: AnnouncementRow) => {
+    if (!selectedOrgId) {
+      Alert.alert('Kalender', 'Bitte waehle zuerst einen Verein aus.');
+      return;
+    }
+    const eventId = getAnnouncementCalendarEventId(announcement.id);
+    const orFilter = buildAnnouncementCalendarFilter(announcement.id, eventId);
+    setCalendarQueueBusy(true);
+    try {
+      const { error } = await supabase
+        .from('calendar_sync_queue')
+        .delete()
+        .eq('org_id', selectedOrgId)
+        .or(orFilter);
+      if (error) throw error;
+      setCalendarSyncedAnnouncements((prev) => {
+        const next = { ...prev };
+        delete next[announcement.id];
+        return next;
+      });
+      Alert.alert('Kalender', 'Termin wurde entfernt.');
+    } catch (e: any) {
+      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht entfernt werden.');
+    } finally {
+      setCalendarQueueBusy(false);
+    }
+  };
+
+  const handleAnnouncementDelete = async (announcementId: string) => {
+    try {
+      const { error } = await supabase.from('announcements').delete().eq('id', announcementId);
+      if (error) throw error;
+      setAnnRemote((prev) => prev.filter((ann) => ann.id !== announcementId));
+      setCalendarSyncedAnnouncements((prev) => {
+        if (!prev[announcementId]) return prev;
+        const next = { ...prev };
+        delete next[announcementId];
+        return next;
+      });
+      if (editingAnnouncementId === announcementId) {
+        resetAnnouncementForm();
+        setAnnouncementModalVisible(false);
+      }
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht geloescht werden.');
+    }
+  };
+
   useEffect(() => {
+    let alive = true;
     (async () => {
-      if (!selectedOrgId || !sessionUserId) { setAnnRemote([]); return; }
+      if (!selectedOrgId || !sessionUserId) { setAnnRemote([]); setCalendarSyncedAnnouncements({}); setLoadingRemote(false); return; }
       setLoadingRemote(true);
-      let q = supabase.from('announcements').select('id,title,body,event_date').eq('org_id', selectedOrgId).order('created_at', { ascending: false });
-      if (selectedGroupId) q = q.eq('group_id', selectedGroupId); else q = q.is('group_id', null);
-      const { data } = await q;
-      setAnnRemote((data ?? []) as any[]);
+      const [annRes, queueRes] = await Promise.all([
+        supabase
+          .from('announcements')
+          .select('id,title,body,event_date')
+          .eq('org_id', selectedOrgId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('calendar_sync_queue')
+          .select('event_payload')
+          .eq('org_id', selectedOrgId),
+      ]);
+      if (!alive) return;
+      if (annRes.error) {
+        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungen konnten nicht geladen werden.');
+        setAnnRemote([]);
+      } else {
+        setAnnRemote((annRes.data ?? []) as any[]);
+      }
+      if (queueRes.error) {
+        setCalendarSyncedAnnouncements({});
+      } else {
+        const map = ((queueRes.data ?? []) as any[]).reduce<Record<string, boolean>>((acc, row: any) => {
+          const payload = row.event_payload as (CalendarEventPayload & { announcementId?: string }) | null;
+          let annId = payload?.announcementId ?? null;
+          if (!annId && payload?.id?.startsWith('ann-')) {
+            const remainder = payload.id.slice(4);
+            const legacyMatch = remainder.match(/(.+)-(\d{10,})$/);
+            annId = legacyMatch ? legacyMatch[1] : remainder;
+          }
+          if (annId) acc[annId] = true;
+          return acc;
+        }, {});
+        setCalendarSyncedAnnouncements(map);
+      }
       setLoadingRemote(false);
     })();
-  }, [selectedOrgId, selectedGroupId, sessionUserId]);
+    return () => { alive = false; };
+  }, [selectedOrgId, sessionUserId]);
 
   useEffect(() => {
     if (screen === 'chat') setChatMode('pick');
@@ -284,16 +773,17 @@ export default function Home() {
     return () => { if (unsub) unsub(); };
   }, [chatChannelId, sessionUserId]);
 
-  // Announcements state (template)
-  const [announcements, setAnnouncements] = useState(
-    [
-      { id: 'a1', title: 'Sommerfest am 21.07.', body: 'Ab 14 Uhr auf dem Vereinsgelände. Kuchen- und Salatspenden willkommen!', date: '2025-07-10' },
-      { id: 'a2', title: 'Neue Trikots eingetroffen', body: 'Abholung diese Woche beim Training möglich.', date: '2025-07-08' },
-    ]
-  );
-  const [showNewAnnouncement, setShowNewAnnouncement] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newBody, setNewBody] = useState('');
+  const [announcementModalVisible, setAnnouncementModalVisible] = useState(false);
+  const [announcementModalMode, setAnnouncementModalMode] = useState<'create' | 'edit'>('create');
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementBody, setAnnouncementBody] = useState('');
+  const [announcementDate, setAnnouncementDate] = useState('');
+  const [announcementDateObj, setAnnouncementDateObj] = useState<Date | null>(null);
+  const [showAnnouncementDatePicker, setShowAnnouncementDatePicker] = useState(false);
+  const [announcementActionTarget, setAnnouncementActionTarget] = useState<AnnouncementRow | null>(null);
+  const [calendarQueueBusy, setCalendarQueueBusy] = useState(false);
+  const [announcementCalendarBroadcast, setAnnouncementCalendarBroadcast] = useState(false);
 
   // Hardware-Back für Android
   useEffect(() => {
@@ -340,11 +830,26 @@ export default function Home() {
           keyExtractor={(x) => x.id}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24, width: '100%' }}
           renderItem={({ item }) => (
-            <View style={[styles.card, styles.announcementCard]}> 
-              <Text style={styles.annTitle}>{item.title}</Text>
-              <Text style={styles.annMeta}>{item.event_date ? formatDateDE(item.event_date) : 'Ohne Datum'}</Text>
-              {!!item.body && <Text style={styles.annBody}>{item.body}</Text>}
-            </View>
+            <TouchableOpacity
+              activeOpacity={canCreateAnnouncement ? 0.85 : 1}
+              onLongPress={() => canCreateAnnouncement && openAnnouncementActions(item)}
+              style={[styles.card, styles.announcementCard, styles.announcementCardRow]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.annTitle}>{item.title}</Text>
+                <Text style={styles.annMeta}>{item.event_date ? formatDateDE(item.event_date) : 'Ohne Datum'}</Text>
+                {!!item.body && <Text style={styles.annBody}>{item.body}</Text>}
+              </View>
+              {canCreateAnnouncement && (
+                <TouchableOpacity
+                  onPress={(e: GestureResponderEvent) => { e.stopPropagation(); openAnnouncementActions(item); }}
+                  style={styles.groupActionButton}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={20} color="#E5F4EF" />
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
           )}
           ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
         />
@@ -353,50 +858,143 @@ export default function Home() {
 
 
         {canCreateAnnouncement && (
-          <TouchableOpacity style={[styles.button, styles.annButton]} onPress={() => setShowNewAnnouncement(true)}>
+          <TouchableOpacity style={[styles.button, styles.annButton]} onPress={() => openAnnouncementModal('create')}>
             <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
           </TouchableOpacity>
         )}
 
 
-        <Modal visible={showNewAnnouncement} transparent animationType="fade" onRequestClose={() => setShowNewAnnouncement(false)}>
-          <Pressable style={styles.modalOverlay} onPress={() => setShowNewAnnouncement(false)} />
+        <Modal visible={announcementModalVisible} transparent animationType="fade" onRequestClose={closeAnnouncementModal}>
+          <Pressable style={styles.modalOverlay} onPress={closeAnnouncementModal} />
           <View style={styles.modalCenterWrap}>
-            <View style={[styles.modalCard, styles.orgModalCard]}>
+            <View style={[styles.modalCard, styles.orgModalCard, styles.announcementModalCard]}>
               <View style={{ padding: 12 }}>
-                <Text style={[styles.sectionTitle,  ]}>Ankündigungen</Text>
-                <TextInput style={styles.input} placeholder="Titel" placeholderTextColor={'#95959588'} value={newTitle} onChangeText={setNewTitle} />
+                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankündigung bearbeiten' : 'Neue Ankündigung'}</Text>
+                <TextInput style={styles.input} placeholder="Titel" placeholderTextColor={'#95959588'} value={announcementTitle} onChangeText={setAnnouncementTitle} />
                 <TextInput
                   style={[styles.input, styles.textarea]}
                   placeholder="Inhalt"
                   placeholderTextColor={'#95959588'}
-                  value={newBody}
-                  onChangeText={setNewBody}
+                  value={announcementBody}
+                  onChangeText={setAnnouncementBody}
                   multiline
                   scrollEnabled
                   textAlignVertical="top"
                 />
+                <Text style={styles.label}>Datum</Text>
+                <TouchableOpacity
+                  style={[styles.datePickerButton, showAnnouncementDatePicker && styles.datePickerButtonActive]}
+                  onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
+                >
+                  <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
+                  </Text>
+                </TouchableOpacity>
+                {showAnnouncementDatePicker && Platform.OS === 'ios' && (
+                  <DateTimePicker
+                    mode="date"
+                    display="spinner"
+                    value={announcementDateObj ?? new Date()}
+                    onChange={handleAnnouncementDatePickerChange}
+                  />
+                )}
+                {showAnnouncementDatePicker && Platform.OS !== 'ios' && (
+                  <DateTimePicker
+                    mode="date"
+                    display="calendar"
+                    value={announcementDateObj ?? new Date()}
+                    onChange={handleAnnouncementDatePickerChange}
+                  />
+                )}
+                <TouchableOpacity
+                  style={[styles.calendarToggleRow, announcementCalendarBroadcast && styles.calendarToggleRowActive]}
+                  onPress={() => setAnnouncementCalendarBroadcast((prev) => !prev)}
+                >
+                  <View style={[styles.calendarToggleCheckbox, announcementCalendarBroadcast && styles.calendarToggleCheckboxActive]}>
+                    {announcementCalendarBroadcast && <Ionicons name="checkmark" size={16} color="#0F2530" />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.calendarToggleLabel}>Im Kalender fuer alle eintragen</Text>
+                    <Text style={styles.calendarToggleHint}>Legt nach dem Speichern automatisch einen Termin fuer deinen Verein an.</Text>
+                  </View>
+                </TouchableOpacity>
                 <View style={{ flexDirection: 'row' }}>
                   <TouchableOpacity
                     style={[styles.btnLink, { marginRight: 8 }]}
-                    onPress={async () => {
-                      const t = newTitle.trim();
-                      const b = newBody.trim();
-                      if (!t || !selectedOrgId || !sessionUserId) return;
-                      const payload: any = { org_id: selectedOrgId, group_id: selectedGroupId, author_id: sessionUserId, title: t, body: b || null };
-                      const { data, error } = await supabase.from('announcements').insert(payload).select('id,title,body,event_date').single();
-                      if (!error && data) {
-                        setAnnRemote((prev) => [data as any, ...prev]);
-                        setNewTitle(''); setNewBody(''); setShowNewAnnouncement(false);
-                      }
-                    }}
+                    onPress={handlePersistAnnouncement}
                   >
                     <Text style={styles.btnLinkText}>Speichern</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.btnLink} onPress={() => setShowNewAnnouncement(false)}>
+                  <TouchableOpacity style={styles.btnLink} onPress={closeAnnouncementModal}>
                     <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
                   </TouchableOpacity>
                 </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+        <Modal visible={!!announcementActionTarget} transparent animationType="fade" onRequestClose={() => setAnnouncementActionTarget(null)}>
+          <Pressable style={styles.modalOverlay} onPress={() => setAnnouncementActionTarget(null)} />
+          <View style={styles.modalCenterWrap}>
+            <View style={styles.modalCard}>
+              <View style={{ padding: 12 }}>
+                <Text style={styles.sectionTitle}>Ankündigung</Text>
+                {!!announcementActionTarget && (
+                  <Text style={styles.modalSubtitle}>{announcementActionTarget.title}</Text>
+                )}
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => {
+                    if (!announcementActionTarget) return;
+                    const target = announcementActionTarget;
+                    setAnnouncementActionTarget(null);
+                    openAnnouncementModal('edit', target);
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>Bearbeiten</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonPrimary, calendarQueueBusy && styles.actionButtonDisabled]}
+                  disabled={calendarQueueBusy}
+                  onPress={async () => {
+                    if (!announcementActionTarget || calendarQueueBusy) return;
+                    const target = announcementActionTarget;
+                    if (calendarSyncedAnnouncements[target.id]) {
+                      await handleAnnouncementCalendarUnsync(target);
+                    } else {
+                      await handleAnnouncementCalendarSync(target);
+                    }
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>
+                    {announcementActionTarget && calendarSyncedAnnouncements[announcementActionTarget.id]
+                      ? 'Im Kalender für alle austragen'
+                      : 'Im Kalender für alle eintragen'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonDanger]}
+                  onPress={() => {
+                    if (!announcementActionTarget) return;
+                    const target = announcementActionTarget;
+                    Alert.alert('Ankündigung löschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
+                      { text: 'Abbrechen', style: 'cancel' },
+                      {
+                        text: 'Löeschen',
+                        style: 'destructive',
+                        onPress: async () => {
+                          setAnnouncementActionTarget(null);
+                          await handleAnnouncementDelete(target.id);
+                        },
+                      },
+                    ]);
+                  }}
+                >
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.btnLink} onPress={() => setAnnouncementActionTarget(null)}>
+                  <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
+                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -419,7 +1017,7 @@ export default function Home() {
             <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanal</Text>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanäle</Text>
             <View style={{ width: 60 }} />
           </View>
           <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
@@ -429,17 +1027,19 @@ export default function Home() {
               renderItem={({ item }) => (
                 <TouchableOpacity
                   onPress={() => { setSelectedGroupId(item.id); setChatMode('in'); }}
-                  onLongPress={() => {
-                    if (orgRole !== 'director') return;
-                    Alert.alert('Gruppe', 'Aktion wählen', [
-                      { text: 'Umbenennen', onPress: () => { setRenameGroupId(item.id); setRenameGroupName(item.name); setShowRenameGroup(true); } },
-                      { text: 'Löschen', style: 'destructive', onPress: async () => { const ok = await deleteGroupCascade(item.id); if (ok) { setGroups((prev) => prev.filter(g => g.id !== item.id)); if (selectedGroupId === item.id) { setSelectedGroupId(null); setChatMode('pick'); setChatChannelId(null); } } } },
-                      { text: 'Abbrechen', style: 'cancel' },
-                    ]);
-                  }}
-                  style={styles.card}
+                  onLongPress={() => openGroupActions(item)}
+                  style={[styles.card, styles.groupCard]}
                 >
-                  <Text style={{ fontWeight: '700', color: '#E5F4EF' }}>{item.name}</Text>
+                  <Text style={{ fontWeight: '700', color: '#E5F4EF', flex: 1 }}>{item.name}</Text>
+                  {(orgRole === 'director') && (
+                    <TouchableOpacity
+                      onPress={(e: GestureResponderEvent) => { e.stopPropagation(); openGroupActions(item); }}
+                      style={styles.groupActionButton}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Ionicons name="ellipsis-horizontal" size={20} color="#E5F4EF" />
+                    </TouchableOpacity>
+                  )}
                 </TouchableOpacity>
               )}
               ListEmptyComponent={(
@@ -488,6 +1088,48 @@ export default function Home() {
                       <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
                     </TouchableOpacity>
                   </View>
+                </View>
+              </View>
+            </View>
+          </Modal>
+          <Modal visible={!!groupActionTarget} transparent animationType="fade" onRequestClose={() => setGroupActionTarget(null)}>
+            <Pressable style={styles.modalOverlay} onPress={() => setGroupActionTarget(null)} />
+            <View style={styles.modalCenterWrap}>
+              <View style={styles.modalCard}>
+                <View style={{ padding: 12 }}>
+                  <Text style={styles.sectionTitle}>Gruppe verwalten</Text>
+                  {!!groupActionTarget && (
+                    <Text style={styles.modalSubtitle}>{groupActionTarget.name}</Text>
+                  )}
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => {
+                      if (!groupActionTarget) return;
+                      setRenameGroupId(groupActionTarget.id);
+                      setRenameGroupName(groupActionTarget.name);
+                      setGroupActionTarget(null);
+                      setShowRenameGroup(true);
+                    }}
+                  >
+                    <Text style={styles.actionButtonText}>Umbenennen</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.actionButtonDanger]}
+                    onPress={() => {
+                      if (!groupActionTarget) return;
+                      const target = groupActionTarget;
+                      setGroupActionTarget(null);
+                      Alert.alert('Gruppe löschen', `Soll die Gruppe "${target.name}" wirklich gelöscht werden?`, [
+                        { text: 'Abbrechen', style: 'cancel' },
+                        { text: 'Löschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
+                      ]);
+                    }}
+                  >
+                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe löschen</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.btnLink} onPress={() => setGroupActionTarget(null)}>
+                    <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </View>
@@ -662,35 +1304,47 @@ if (screen === 'aufgaben') {
                   data={orgs}
                   keyExtractor={(o) => o.id}
                   contentContainerStyle={styles.switchModalList}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setSelectedOrgId(item.id);
-                        setGroups([]);
-                        setSelectedGroupId(null);
-                        setChatChannelId(null);
-                        setChatMode('pick');
-                        setShowSwitchHome(false);
-                      }}
-                      onLongPress={() => {
-                        if (selectedOrgId !== item.id || orgRole !== 'director') return;
-                        Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [
-                          { text: 'Abbrechen', style: 'cancel' },
-                          {
-                            text: 'Löschen',
-                            style: 'destructive',
-                            onPress: async () => {
-                              const ok = await deleteOrganisationCascade(item.id);
-                              if (ok) await refreshOrgsAndGroups();
+                  renderItem={({ item }) => {
+                    const isDirector = orgRoles[item.id] === 'director';
+                    return (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setSelectedOrgId(item.id);
+                          setGroups([]);
+                          setSelectedGroupId(null);
+                          setChatChannelId(null);
+                          setChatMode('pick');
+                          setShowSwitchHome(false);
+                        }}
+                        onLongPress={() => {
+                          if (!isDirector || selectedOrgId !== item.id) return;
+                          Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [
+                            { text: 'Abbrechen', style: 'cancel' },
+                            {
+                              text: 'Löschen',
+                              style: 'destructive',
+                              onPress: async () => {
+                                const ok = await deleteOrganisationCascade(item.id);
+                                if (ok) await refreshOrgsAndGroups();
+                              }
                             }
-                          }
-                        ]);
-                      }}
-                      style={[styles.orgSwitchButton, selectedOrgId === item.id && styles.orgSwitchButtonActive]}
-                    >
-                      <Text style={styles.orgSwitchButtonText}>{item.name}</Text>
-                    </TouchableOpacity>
-                  )}
+                          ]);
+                        }}
+                        style={[styles.orgSwitchButton, styles.orgSwitchRow, selectedOrgId === item.id && styles.orgSwitchButtonActive]}
+                      >
+                        <Text style={styles.orgSwitchButtonText}>{item.name}</Text>
+                        {isDirector && (
+                          <TouchableOpacity
+                            onPress={(e) => { e.stopPropagation(); openOrgActions(item); }}
+                            style={styles.orgActionButton}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          >
+                            <Ionicons name="ellipsis-horizontal" size={18} color="#E5F4EF" />
+                          </TouchableOpacity>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  }}
                   ListFooterComponent={(
                     <TouchableOpacity
                       onPress={() => { setShowSwitchHome(false); setShowCreateOrg(true); }}
@@ -702,6 +1356,66 @@ if (screen === 'aufgaben') {
                   showsVerticalScrollIndicator={false}
                 />
               </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={!!orgActionTarget} transparent animationType="fade" onRequestClose={() => setOrgActionTarget(null)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setOrgActionTarget(null)} />
+        <View style={styles.modalCenterWrap}>
+          <View style={styles.modalCard}>
+            <View style={{ padding: 12 }}>
+              <Text style={styles.sectionTitle}>Verein</Text>
+              {!!orgActionTarget && (
+                <Text style={styles.modalSubtitle}>{orgActionTarget.name}</Text>
+              )}
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => {
+                  if (!orgActionTarget) return;
+                  setOrgActionTarget(null);
+                  setRenameOrgId(orgActionTarget.id);
+                  setRenameOrgName(orgActionTarget.name);
+                  setShowRenameOrg(true);
+                }}
+              >
+                <Text style={styles.actionButtonText}>Verein umbenennen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => {
+                  if (!orgActionTarget) return;
+                  const target = orgActionTarget;
+                  setOrgActionTarget(null);
+                  openManageMembers(target);
+                }}
+              >
+                <Text style={styles.actionButtonText}>Mitglieder verwalten</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonDanger]}
+                onPress={() => {
+                  if (!orgActionTarget) return;
+                  const target = orgActionTarget;
+                  Alert.alert('Verein löschen?', `Soll "${target.name}" dauerhaft gelöscht werden?`, [
+                    { text: 'Abbrechen', style: 'cancel' },
+                    {
+                      text: 'Löschen',
+                      style: 'destructive',
+                      onPress: async () => {
+                        setOrgActionTarget(null);
+                        const ok = await deleteOrganisationCascade(target.id);
+                        if (ok) await refreshOrgsAndGroups();
+                      },
+                    },
+                  ]);
+                }}
+              >
+                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnLink} onPress={() => setOrgActionTarget(null)}>
+                <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -763,6 +1477,74 @@ if (screen === 'aufgaben') {
             </View>
           </View>
         </Modal>
+        <Modal visible={showRenameOrg} transparent animationType="fade" onRequestClose={() => setShowRenameOrg(false)}>
+          <Pressable style={styles.modalOverlay} onPress={() => setShowRenameOrg(false)} />
+          <View style={styles.modalCenterWrap}>
+            <View style={styles.modalCard}>
+              <View style={{ padding: 12 }}>
+                <Text style={styles.sectionTitle}>Verein umbenennen</Text>
+                <TextInput style={styles.input} placeholder="Neuer Name" placeholderTextColor={'#95959588'} value={renameOrgName} onChangeText={setRenameOrgName} />
+                <View style={{ flexDirection: 'row' }}>
+                  <TouchableOpacity style={[styles.btnLink, { marginRight: 8 }]} onPress={handleOrgRenameSave}>
+                    <Text style={styles.btnLinkText}>Speichern</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.btnLink} onPress={closeRenameOrgModal}>
+                    <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+        <Modal visible={showManageMembers} transparent animationType="fade" onRequestClose={closeManageMembers}>
+          <Pressable style={styles.modalOverlay} onPress={closeManageMembers} />
+          <View style={styles.modalCenterWrap}>
+            <View style={[styles.modalCard, styles.orgModalCard, styles.membersModalCard]}>
+              <View style={{ padding: 12, maxHeight: 520 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={styles.sectionTitle}>Mitglieder verwalten</Text>
+                  <TouchableOpacity onPress={closeManageMembers}>
+                    <Ionicons name="close" size={20} color="#E5F4EF" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.modalSubtitle}>{manageMembersOrg?.name ?? ''}</Text>
+                {(!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') && (
+                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren möglich.</Text>
+                )}
+                {orgMembersLoading ? (
+                  <Text style={styles.text}>Lade Mitglieder...</Text>
+                ) : (
+                  <ScrollView style={{ maxHeight: 420 }}>
+                    <View style={styles.memberSection}>
+                      <Text style={styles.memberSectionTitle}>Lehrer</Text>
+                      {orgMembers.filter((m) => m.role === 'teacher').length ? (
+                        orgMembers
+                          .filter((m) => m.role === 'teacher')
+                          .map((member) =>
+                            renderMemberCard(member, !!(manageMembersOrg && orgRoles[manageMembersOrg.id] === 'director')),
+                          )
+                      ) : (
+                        <Text style={styles.memberEmptyText}>Keine Lehrer vorhanden.</Text>
+                      )}
+                    </View>
+                    <View style={styles.memberSection}>
+                      <Text style={styles.memberSectionTitle}>Schüler</Text>
+                      {orgMembers.filter((m) => m.role === 'student').length ? (
+                        orgMembers
+                          .filter((m) => m.role === 'student')
+                          .map((member) =>
+                            renderMemberCard(member, !!(manageMembersOrg && orgRoles[manageMembersOrg.id] === 'director')),
+                          )
+                      ) : (
+                        <Text style={styles.memberEmptyText}>Keine Schüler vorhanden.</Text>
+                      )}
+                    </View>
+                  </ScrollView>
+                )}
+              </View>
+            </View>
+          </View>
+        </Modal>
 
     </SafeAreaView>
   );
@@ -788,7 +1570,9 @@ const styles = StyleSheet.create({
   switchModalList: { paddingVertical: 4, paddingHorizontal: 4 },
   orgSwitchButton: { paddingVertical: 16, paddingHorizontal: 18, borderRadius: 28, borderWidth: 1, borderColor: '#3D8B77', backgroundColor: '#215C4A', marginBottom: 10 },
   orgSwitchButtonActive: { backgroundColor: '#2F7A60', borderColor: '#2F7A60' },
+  orgSwitchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   orgSwitchButtonText: { color: '#E5F4EF', fontWeight: '700', fontSize: 16 },
+  orgActionButton: { padding: 6, borderRadius: 16, backgroundColor: '#1b3746', marginLeft: 12 },
   createOrgButton: { borderStyle: 'dashed', backgroundColor: 'transparent' },
   createOrgButtonText: { color: '#9FE1C7' },
   annButton: { marginTop: 12, marginBottom: 12, alignSelf: 'center' },
@@ -841,13 +1625,26 @@ const styles = StyleSheet.create({
 
   // Cards & inputs
   card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', marginBottom: 10, backgroundColor: '#112a37', width: '100%' },
+  groupCard: { flexDirection: 'row', alignItems: 'center' },
+  groupActionButton: { padding: 4, marginLeft: 12, borderRadius: 16, backgroundColor: '#1b3746' },
   announcementCard: { minHeight: 150, justifyContent: 'space-between' },
+  announcementCardRow: { flexDirection: 'row', alignItems: 'center' },
   annTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4, color: '#E5F4EF' },
   annMeta: { fontSize: 12, color: '#000000ff', marginBottom: 6 },
   annBody: { fontSize: 14, color: '#E5F4EF' },
   input: { borderWidth: 1, borderColor: '#2A3E48', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, color: '#E5F4EF', backgroundColor: '#0F2530' },
   inputMultiline: { height: 44 },
   textarea: { height: 120 },
+  datePickerButton: { borderWidth: 1, borderColor: '#2A3E48', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 12, backgroundColor: '#0F2530', marginBottom: 12 },
+  datePickerButtonActive: { borderColor: '#3D8B77' },
+  datePickerPlaceholder: { color: '#6B7280', fontSize: 16 },
+  datePickerValue: { color: '#E5F4EF', fontSize: 16, fontWeight: '600' },
+  calendarToggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 6, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 12 },
+  calendarToggleRowActive: { borderColor: '#3D8B77' },
+  calendarToggleCheckbox: { width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: '#3D8B77', marginRight: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  calendarToggleCheckboxActive: { backgroundColor: '#3D8B77', borderColor: '#3D8B77' },
+  calendarToggleLabel: { color: '#E5F4EF', fontSize: 16, fontWeight: '600' },
+  calendarToggleHint: { color: '#9CA3AF', fontSize: 13, marginTop: 2 },
   // Flat menu buttons with separators
   menuBtn: {
     width: '100%',
@@ -868,9 +1665,31 @@ const styles = StyleSheet.create({
   modalCenterWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   modalCard: { width: '90%', backgroundColor: '#194055', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 6 },
   orgModalCard: { backgroundColor: '#0f2533', borderColor: '#3D8B77' },
+  announcementModalCard: { maxHeight: 660 },
+  membersModalCard: { maxHeight: 640 },
+  modalSubtitle: { color: '#9FE1C7', fontWeight: '600', marginBottom: 16 },
   btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start' },
   btnLinkText: { color: '#2563EB', fontWeight: '700' },
-  btnLinkTextMuted: { color: '#6B7280', fontWeight: '600' },
+  btnLinkTextMuted: { color: '#ffffffff', fontWeight: '600' },
+  actionButton: { width: '100%', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 10, alignItems: 'center' },
+  actionButtonPrimary: { borderColor: '#2563EB', backgroundColor: '#1a2f49' },
+  actionButtonDanger: { borderColor: '#7F1D1D', backgroundColor: '#1a1414' },
+  actionButtonText: { color: '#E5F4EF', fontWeight: '700' },
+  actionButtonDangerText: { color: '#F87171' },
+  actionButtonDisabled: { opacity: 0.5 },
+  memberHint: { color: '#9CA3AF', marginBottom: 8 },
+  memberSection: { marginBottom: 16 },
+  memberSectionTitle: { color: '#E5F4EF', fontWeight: '700', marginBottom: 8 },
+  memberCard: { borderWidth: 1, borderColor: '#2A3E48', borderRadius: 10, padding: 10, marginBottom: 10, backgroundColor: '#0F2530' },
+  memberName: { color: '#E5F4EF', fontWeight: '600', fontSize: 16 },
+  memberEmail: { color: '#9CA3AF', fontSize: 13 },
+  memberGroupsRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 },
+  memberGroupChip: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, borderWidth: 1, borderColor: '#2A3E48', marginRight: 6, marginBottom: 6 },
+  memberGroupChipActive: { backgroundColor: '#194055', borderColor: '#194055' },
+  memberGroupChipDisabled: { opacity: 0.5 },
+  memberGroupChipText: { color: '#E5F4EF', fontSize: 13 },
+  memberGroupChipTextActive: { fontWeight: '700' },
+  memberEmptyText: { color: '#9CA3AF', fontStyle: 'italic', marginBottom: 8 },
 
   // Chat bubbles
   bubbleRow: { width: '100%', flexDirection: 'row', marginBottom: 8 },
@@ -900,6 +1719,7 @@ const formatDateDE = (iso: string) => {
   if (isNaN(d.getTime())) return iso;
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 };
+
 
 
 
