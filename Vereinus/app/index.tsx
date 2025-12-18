@@ -1,12 +1,18 @@
 ﻿import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import type { TextStyle } from 'react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GestureResponderEvent } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as DocumentPicker from 'expo-document-picker';
+import { Video, ResizeMode } from 'expo-av';
 
 
 type Screen = 'home' | 'ankuendigung' | 'chat' | 'uebungen' | 'aufgaben';
@@ -28,6 +34,30 @@ type OrgMemberRow = {
   displayName: string;
   email: string | null;
   groupIds: string[];
+};
+type RichTextStyle = {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+};
+type ExerciseAttachment = {
+  id: string;
+  type: 'image' | 'video' | 'file';
+  url: string;
+  name?: string | null;
+};
+type Exercise = {
+  id: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  attachments?: ExerciseAttachment[];
+  textStyles?: {
+    title?: RichTextStyle;
+    description?: RichTextStyle;
+  };
+  createdAt: string;
 };
 
 export default function Home() {
@@ -91,13 +121,28 @@ const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string
   const [showRenameGroup, setShowRenameGroup] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [renameGroupName, setRenameGroupName] = useState('');
-  const [groupActionTarget, setGroupActionTarget] = useState<{ id: string; name: string } | null>(null);
-  const [orgActionTarget, setOrgActionTarget] = useState<{ id: string; name: string } | null>(null);
-  const [showRenameOrg, setShowRenameOrg] = useState(false);
-  const [renameOrgId, setRenameOrgId] = useState<string | null>(null);
-  const [renameOrgName, setRenameOrgName] = useState('');
-  const [showManageMembers, setShowManageMembers] = useState(false);
-  const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: string } | null>(null);
+const [groupActionTarget, setGroupActionTarget] = useState<{ id: string; name: string } | null>(null);
+const [orgActionTarget, setOrgActionTarget] = useState<{ id: string; name: string } | null>(null);
+const [showRenameOrg, setShowRenameOrg] = useState(false);
+const [renameOrgId, setRenameOrgId] = useState<string | null>(null);
+const [renameOrgName, setRenameOrgName] = useState('');
+const [showManageMembers, setShowManageMembers] = useState(false);
+const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: string } | null>(null);
+  // --- Uebungen ---
+  const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
+  const [showAddExercise, setShowAddExercise] = useState(false);
+  const [exerciseTitle, setExerciseTitle] = useState('');
+  const [exerciseDescription, setExerciseDescription] = useState('');
+  const [exerciseImageUrl, setExerciseImageUrl] = useState('');
+  const [exerciseVideoUrl, setExerciseVideoUrl] = useState('');
+  const [editingExerciseId, setEditingExerciseId] = useState<string | null>(null);
+  const [titleStyle, setTitleStyle] = useState<RichTextStyle>({});
+  const [descriptionStyle, setDescriptionStyle] = useState<RichTextStyle>({});
+  const [attachments, setAttachments] = useState<ExerciseAttachment[]>([]);
+  const [showMediaModal, setShowMediaModal] = useState(false);
+  const [newMediaUrl, setNewMediaUrl] = useState('');
+  const [newMediaType, setNewMediaType] = useState<'image' | 'video' | 'file'>('image');
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([]);
   const [orgMembersLoading, setOrgMembersLoading] = useState(false);
   const [orgMemberGroups, setOrgMemberGroups] = useState<{ id: string; name: string }[]>([]);
@@ -113,6 +158,12 @@ const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string
   const canCreateAnnouncement = useMemo(() => {
     return !!(sessionUserId && orgRole === 'director' && selectedOrgId);
   }, [sessionUserId, orgRole, selectedOrgId]);
+  const EXERCISE_STORAGE_BASE = '@vereinus/exercises';
+  const exerciseStorageKey = useMemo(
+    () => `${EXERCISE_STORAGE_BASE}:${selectedOrgId ?? 'default'}`,
+    [selectedOrgId],
+  );
+  const uid = () => Math.random().toString(36).slice(2, 10);
 
   useEffect(() => {
     let alive = true;
@@ -182,6 +233,212 @@ const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string
     } else {
       setGroups([]); setSelectedGroupId(null);
     }
+  };
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(exerciseStorageKey);
+        if (!alive) return;
+        if (raw) setExercises(JSON.parse(raw));
+        else setExercises([]);
+      } catch {
+        if (alive) setExercises([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [exerciseStorageKey]);
+
+  useEffect(() => {
+    AsyncStorage.setItem(exerciseStorageKey, JSON.stringify(exercises)).catch(() => {});
+  }, [exercises, exerciseStorageKey]);
+
+  const buildTextStyle = (style?: RichTextStyle): TextStyle => {
+    const decorations: string[] = [];
+    if (style?.underline) decorations.push('underline');
+    return {
+      ...(style?.bold ? { fontWeight: '800' } : {}),
+      ...(style?.italic ? { fontStyle: 'italic' } : {}),
+      ...(decorations.length ? { textDecorationLine: decorations.join(' ') as TextStyle['textDecorationLine'] } : {}),
+    };
+  };
+
+  const resetExerciseForm = () => {
+    setExerciseTitle('');
+    setExerciseDescription('');
+    setExerciseImageUrl('');
+    setExerciseVideoUrl('');
+    setEditingExerciseId(null);
+    setTitleStyle({});
+    setDescriptionStyle({});
+    setAttachments([]);
+    setNewMediaUrl('');
+    setNewMediaType('image');
+    setShowMediaModal(false);
+  };
+
+  const closeAddExerciseModal = () => {
+    setShowMediaModal(false);
+    setShowAddExercise(false);
+  };
+
+  useEffect(() => {
+    if (!showAddExercise && showMediaModal) {
+      setShowMediaModal(false);
+    }
+  }, [showAddExercise, showMediaModal]);
+
+  const openAddExercise = () => {
+    resetExerciseForm();
+    setShowAddExercise(true);
+  };
+
+  const addAttachmentFromModal = () => {
+    const url = newMediaUrl.trim();
+    if (!url) return;
+    setAttachments((prev) => [{ id: uid(), type: newMediaType, url }, ...prev]);
+    setNewMediaUrl('');
+    setShowMediaModal(false);
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const pickFromLibrary = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufügen.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsMultipleSelection: true,
+        quality: 0.7,
+      });
+      if (result.canceled) return;
+      const picked = (result.assets ?? []).map((asset) => ({
+        id: uid(),
+        type: asset.type === 'video' ? 'video' as const : 'image' as const,
+        url: asset.uri,
+      }));
+      if (picked.length) setAttachments((prev) => [...picked, ...prev]);
+    } catch {
+      Alert.alert('Fehler', 'Medien konnten nicht geladen werden.');
+    }
+  };
+
+  const pickDocument = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
+      if (res.type === 'cancel') return;
+      const assets = 'assets' in res && Array.isArray((res as any).assets) ? (res as any).assets : [res];
+      const picked = (assets ?? []).map((asset: any) => ({
+        id: uid(),
+        type: 'file' as const,
+        url: asset.uri,
+        name: asset.name ?? null,
+      }));
+      if (picked.length) setAttachments((prev) => [...picked, ...prev]);
+    } catch {
+      Alert.alert('Fehler', 'Datei konnte nicht geladen werden.');
+    }
+  };
+
+  const handleAttachmentButton = () => {
+    setShowMediaModal(true);
+    // Direkt Galerie öffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
+    pickFromLibrary().catch(() => {});
+  };
+
+  const toggleStyle = (target: 'title' | 'description', key: keyof RichTextStyle) => {
+    if (target === 'title') {
+      setTitleStyle((prev) => ({ ...prev, [key]: !prev[key] }));
+    } else {
+      setDescriptionStyle((prev) => ({ ...prev, [key]: !prev[key] }));
+    }
+  };
+
+  const getExerciseAttachments = (ex: Exercise | null): ExerciseAttachment[] => {
+    if (!ex) return [];
+    if (ex.attachments?.length) return ex.attachments;
+    const legacy: ExerciseAttachment[] = [];
+    if (ex.imageUrl) legacy.push({ id: `${ex.id}-legacy-image`, type: 'image', url: ex.imageUrl });
+    if (ex.videoUrl) legacy.push({ id: `${ex.id}-legacy-video`, type: 'video', url: ex.videoUrl });
+    return legacy;
+  };
+
+  const beginEditExercise = (ex: Exercise) => {
+    setShowMediaModal(false);
+    setSelectedExercise(null);
+    setEditingExerciseId(ex.id);
+    setExerciseTitle(ex.title);
+    setExerciseDescription(ex.description ?? '');
+    setTitleStyle(ex.textStyles?.title ?? {});
+    setDescriptionStyle(ex.textStyles?.description ?? {});
+    setAttachments(getExerciseAttachments(ex));
+    setNewMediaUrl('');
+    setNewMediaType('image');
+    setShowAddExercise(true);
+  };
+
+  const deleteExercise = (id: string) => {
+    setExercises((prev) => prev.filter((ex) => ex.id !== id));
+    if (selectedExercise?.id === id) setSelectedExercise(null);
+    if (editingExerciseId === id) setEditingExerciseId(null);
+  };
+
+  const addExercise = () => {
+    const title = exerciseTitle.trim();
+    if (!title) return;
+    const attachmentsToSave = attachments.length
+      ? attachments
+      : [
+        ...(exerciseImageUrl.trim() ? [{ id: uid(), type: 'image' as const, url: exerciseImageUrl.trim() }] : []),
+        ...(exerciseVideoUrl.trim() ? [{ id: uid(), type: 'video' as const, url: exerciseVideoUrl.trim() }] : []),
+      ];
+    const primaryImage = attachmentsToSave.find((a) => a.type === 'image')?.url;
+    const primaryVideo = attachmentsToSave.find((a) => a.type === 'video')?.url;
+    if (editingExerciseId) {
+      setExercises((prev) => {
+        const existing = prev.find((e) => e.id === editingExerciseId);
+        const updated: Exercise = {
+          ...(existing ?? { id: editingExerciseId, createdAt: new Date().toISOString() }),
+          title,
+          description: exerciseDescription.trim() || undefined,
+          imageUrl: primaryImage || undefined,
+          videoUrl: primaryVideo || undefined,
+          attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
+          textStyles: { title: titleStyle, description: descriptionStyle },
+        };
+        return prev.map((ex) => (ex.id === editingExerciseId ? updated : ex));
+      });
+      setSelectedExercise((prev) => (prev && prev.id === editingExerciseId ? {
+        ...prev,
+        title,
+        description: exerciseDescription.trim() || undefined,
+        imageUrl: primaryImage || undefined,
+        videoUrl: primaryVideo || undefined,
+        attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
+        textStyles: { title: titleStyle, description: descriptionStyle },
+      } : prev));
+    } else {
+      const newEx: Exercise = {
+        id: uid(),
+        title,
+        description: exerciseDescription.trim() || undefined,
+        imageUrl: primaryImage || undefined,
+        videoUrl: primaryVideo || undefined,
+        attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
+        textStyles: { title: titleStyle, description: descriptionStyle },
+        createdAt: new Date().toISOString(),
+      };
+      setExercises((prev) => [newEx, ...prev]);
+    }
+    resetExerciseForm();
+    setShowAddExercise(false);
   };
 
   const deleteOrganisationCascade = async (orgId: string) => {
@@ -655,7 +912,7 @@ const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string
         setAnnouncementModalVisible(false);
       }
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht geloescht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht gelöscht werden.');
     }
   };
 
@@ -887,7 +1144,7 @@ const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string
                   onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
                 >
                   <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswaehlen'}
                   </Text>
                 </TouchableOpacity>
                 {showAnnouncementDatePicker && Platform.OS === 'ios' && (
@@ -1232,21 +1489,297 @@ const buildAnnouncementCalendarFilter = (announcementId: string, eventId: string
     );
   }
 
-  if (screen === 'uebungen') {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Übungen</Text>
-      <Text style={styles.text}>Hier könntest du Übungen, Trainingspläne oder Tipps darstellen.</Text>
-      <Button title="Zurück" onPress={() => setScreen('home')} />
-    </View>
-  );
-}
-if (screen === 'aufgaben') {
+    if (screen === 'uebungen') {
+    const canAddExercises = orgRole === 'director';
+    const renderExerciseCard = ({ item }: { item: Exercise }) => (
+      <TouchableOpacity
+        style={styles.exerciseCard}
+        activeOpacity={0.85}
+        onPress={() => setSelectedExercise(item)}
+      >
+        <Text style={[styles.exerciseCardTitle, buildTextStyle(item.textStyles?.title)]} numberOfLines={2}>{item.title}</Text>
+      </TouchableOpacity>
+    );
+    const renderStyleToggle = (target: 'title' | 'description', key: keyof RichTextStyle, label: string) => {
+      const isActive = target === 'title' ? !!titleStyle[key] : !!descriptionStyle[key];
+      return (
+        <TouchableOpacity
+          onPress={() => toggleStyle(target, key)}
+          style={[styles.formatButton, isActive && styles.formatButtonActive]}
+        >
+          <Text style={[styles.formatButtonText, isActive && styles.formatButtonTextActive]}>{label}</Text>
+        </TouchableOpacity>
+      );
+    };
+    const renderAttachmentChip = (att: ExerciseAttachment) => (
+      <View key={att.id} style={styles.attachmentPill}>
+        <Ionicons
+          name={
+            att.type === 'image'
+              ? 'image-outline'
+              : att.type === 'video'
+                ? 'videocam-outline'
+                : 'document-text-outline'
+          }
+          size={18}
+          color="#9FE1C7"
+          style={styles.attachmentIcon}
+        />
+        <Text style={styles.attachmentText} numberOfLines={1}>{att.name || att.url}</Text>
+        <TouchableOpacity onPress={() => removeAttachment(att.id)} style={styles.attachmentRemove}>
+          <Ionicons name="close" size={16} color="#E5F4EF" />
+        </TouchableOpacity>
+      </View>
+    );
+    const selectedAttachments = getExerciseAttachments(selectedExercise);
+
+    return (
+      <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch', justifyContent: 'flex-start' }]}>
+        <View style={styles.exerciseHeader}>
+          <TouchableOpacity onPress={() => setScreen('home')} style={styles.headerBack}>
+            <Ionicons name="chevron-back" size={22} color="#194055" />
+          </TouchableOpacity>
+          <Text style={[styles.title, { marginBottom: 0 }]}>Übungen</Text>
+          <View style={{ width: 32 }} />
+        </View>
+
+        {canAddExercises && (
+          <TouchableOpacity style={styles.addExerciseButton} onPress={openAddExercise}>
+            <Text style={styles.addExerciseText}>+ Übung hinzufügen</Text>
+          </TouchableOpacity>
+        )}
+
+        <FlatList
+          data={exercises}
+          keyExtractor={(item) => item.id}
+          numColumns={2}
+          columnWrapperStyle={styles.exerciseRow}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          renderItem={renderExerciseCard}
+          ListEmptyComponent={<Text style={styles.exerciseEmpty}>Noch keine Übungen.</Text>}
+          showsVerticalScrollIndicator={false}
+        />
+
+        <Modal visible={showAddExercise} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={closeAddExerciseModal}>
+          <Pressable style={styles.modalOverlay} onPress={closeAddExerciseModal} />
+          <View style={styles.modalCenterWrap}>
+              <View style={[styles.modalCard, styles.orgModalCard]}>
+              <ScrollView contentContainerStyle={{ padding: 12 }}>
+                <Text style={styles.sectionTitle}>{editingExerciseId ? 'Übung bearbeiten' : 'Übung anlegen'}</Text>
+                <Text style={styles.label}>Titel</Text>
+                <View style={styles.formatBar}>
+                  {renderStyleToggle('title', 'bold', 'B')}
+                  {renderStyleToggle('title', 'italic', 'I')}
+                  {renderStyleToggle('title', 'underline', 'U')}
+                </View>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Titel"
+                  placeholderTextColor={'#95959588'}
+                  value={exerciseTitle}
+                  onChangeText={setExerciseTitle}
+                />
+                <Text style={[styles.label, { marginTop: 6 }]}>Beschreibung</Text>
+                <View style={styles.formatBar}>
+                  {renderStyleToggle('description', 'bold', 'B')}
+                  {renderStyleToggle('description', 'italic', 'I')}
+                  {renderStyleToggle('description', 'underline', 'U')}
+                </View>
+                <TextInput
+                  style={[styles.input, styles.textarea, { height: 100 }]}
+                  placeholder="Beschreibung"
+                  placeholderTextColor={'#95959588'}
+                  multiline
+                  value={exerciseDescription}
+                  onChangeText={setExerciseDescription}
+                />
+                <TouchableOpacity onPress={handleAttachmentButton} style={styles.attachmentButton}>
+                  <Text style={styles.attachmentButtonText}>+ Bilder & Videos hinzufuegen</Text>
+                </TouchableOpacity>
+                {!!attachments.length && (
+                  <View style={{ marginTop: 6 }}>
+                    {attachments.map(renderAttachmentChip)}
+                  </View>
+                )}
+                <View style={{ flexDirection: 'row', marginTop: 12 }}>
+                  <TouchableOpacity onPress={addExercise} style={[styles.actionButton, styles.actionButtonPrimary, { marginRight: 8 }]}>
+                    <Text style={styles.actionButtonText}>Speichern</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={closeAddExerciseModal} style={styles.actionButton}>
+                    <Text style={styles.actionButtonText}>Abbrechen</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+        <Modal visible={showMediaModal} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={() => setShowMediaModal(false)}>
+          <Pressable style={styles.modalOverlay} onPress={() => setShowMediaModal(false)} />
+          <View style={styles.modalCenterWrap}>
+            <View style={[styles.modalCard, styles.orgModalCard]}>
+              <View style={{ padding: 12 }}>
+                <Text style={styles.sectionTitle}>Medien hinzufuegen</Text>
+                <TouchableOpacity onPress={pickFromLibrary} style={[styles.attachmentButton, { marginTop: 8 }]}>
+                  <Text style={styles.attachmentButtonText}>Aus Galerie auswaehlen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={pickDocument} style={[styles.attachmentButton, { marginTop: 8 }]}>
+                  <Text style={styles.attachmentButtonText}>Aus Dateien waehlen</Text>
+                </TouchableOpacity>
+                <Text style={[styles.label, styles.mediaHint]}>Oder per Link:</Text>
+                <View style={styles.mediaTypeRow}>
+                  <TouchableOpacity
+                    style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'image' && styles.formatButtonActive]}
+                    onPress={() => setNewMediaType('image')}
+                  >
+                    <Text style={[styles.formatButtonText, newMediaType === 'image' && styles.formatButtonTextActive]}>Bild</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'video' && styles.formatButtonActive]}
+                    onPress={() => setNewMediaType('video')}
+                  >
+                    <Text style={[styles.formatButtonText, newMediaType === 'video' && styles.formatButtonTextActive]}>Video</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'file' && styles.formatButtonActive]}
+                    onPress={() => setNewMediaType('file')}
+                  >
+                    <Text style={[styles.formatButtonText, newMediaType === 'file' && styles.formatButtonTextActive]}>Datei</Text>
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={[styles.input, { marginTop: 8 }]}
+                  placeholder={
+                    newMediaType === 'image'
+                      ? 'Bild-URL einfuegen'
+                      : newMediaType === 'video'
+                        ? 'Video-Link (YouTube, Vimeo, etc.)'
+                        : 'Datei-Link (PDF, Dokumente, etc.)'
+                  }
+                  placeholderTextColor={'#95959588'}
+                  value={newMediaUrl}
+                  onChangeText={setNewMediaUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {!!attachments.length && (
+                  <ScrollView style={{ maxHeight: 180, marginTop: 8 }}>
+                    {attachments.map(renderAttachmentChip)}
+                  </ScrollView>
+                )}
+                <View style={{ flexDirection: 'row', marginTop: 12 }}>
+                  <TouchableOpacity onPress={addAttachmentFromModal} style={[styles.actionButton, styles.actionButtonPrimary, { marginRight: 8 }]}>
+                    <Text style={styles.actionButtonText}>hinzufuegen</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setShowMediaModal(false)} style={styles.actionButton}>
+                    <Text style={styles.actionButtonText}>Schliessen</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={!!selectedExercise} transparent animationType="fade" onRequestClose={() => setSelectedExercise(null)}>
+          <Pressable style={styles.modalOverlay} onPress={() => setSelectedExercise(null)} />
+          <View style={styles.modalCenterWrap}>
+            <View style={[styles.modalCard, styles.orgModalCard]}>
+              <ScrollView contentContainerStyle={{ padding: 12 }}>
+                <Text style={[styles.exerciseDetailTitle, buildTextStyle(selectedExercise?.textStyles?.title)]}>{selectedExercise?.title}</Text>
+                {!!selectedExercise?.description && (
+                  <Text style={[styles.exerciseDetailBody, buildTextStyle(selectedExercise?.textStyles?.description)]}>{selectedExercise?.description}</Text>
+                )}
+                {selectedAttachments.map((att) => {
+                  if (att.type === 'image') {
+                    return (
+                      <View key={att.id} style={styles.mediaWrapper}>
+                        <Image
+                          source={{ uri: att.url }}
+                          style={styles.exerciseImage}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    );
+                  }
+                  if (att.type === 'video') {
+                    return (
+                      <View key={att.id} style={styles.mediaWrapper}>
+                        <TouchableOpacity
+                          onPress={() => att.url && Linking.openURL(att.url).catch(() => {})}
+                          style={styles.videoPreview}
+                          activeOpacity={0.9}
+                        >
+                          <Video
+                            source={{ uri: att.url }}
+                            style={styles.videoPlayer}
+                            resizeMode={ResizeMode.CONTAIN}
+                            useNativeControls
+                            shouldPlay={false}
+                            isLooping={false}
+                          />
+                          <View style={styles.videoOverlay}>
+                            <Ionicons name="expand" size={22} color="#E5F4EF" />
+                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild öffnen</Text>
+                          </View>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }
+                  return (
+                    <TouchableOpacity
+                      key={att.id}
+                      onPress={() => att.url && Linking.openURL(att.url).catch(() => {})}
+                      style={styles.videoPreview}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.videoPreviewInner}>
+                        <Ionicons name="document-text-outline" size={42} color="#9FE1C7" />
+                        <Text style={styles.videoPreviewText} numberOfLines={2}>{att.url}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity onPress={() => setSelectedExercise(null)} style={[styles.btnLink, { marginTop: 12 }]}>
+                  <Text style={styles.btnLinkText}>Schliessen</Text>
+                </TouchableOpacity>
+                {canAddExercises && (
+                  <View style={styles.detailActionsRow}>
+                    <TouchableOpacity
+                      onPress={() => selectedExercise && beginEditExercise(selectedExercise)}
+                      style={[styles.actionButton, styles.actionButtonPrimary, { flex: 1, marginRight: 8 }]}
+                    >
+                      <Text style={styles.actionButtonText}>Bearbeiten</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (!selectedExercise) return;
+                        Alert.alert('Übung löschen?', 'Diese Übung wird entfernt.', [
+                          { text: 'Abbrechen', style: 'cancel' },
+                          {
+                            text: 'Löschen',
+                            style: 'destructive',
+                            onPress: () => deleteExercise(selectedExercise.id),
+                          },
+                        ]);
+                      }}
+                      style={[styles.actionButton, styles.actionButtonDanger, { flex: 1 }]}
+                    >
+                      <Text style={styles.actionButtonDangerText}>Löschen</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      </SafeAreaView>
+    );
+  }
+  if (screen === 'aufgaben') {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Aufgaben</Text>
       <Text style={styles.text}>Hier kommen To-Dos, Checklisten oder Aufgabenlisten hin.</Text>
-      <Button title="Zurück" onPress={() => setScreen('home')} />
+      <Button title="Zurueck" onPress={() => setScreen('home')} />
     </View>
   );
 }
@@ -1578,8 +2111,41 @@ const styles = StyleSheet.create({
   annButton: { marginTop: 12, marginBottom: 12, alignSelf: 'center' },
   text: { fontSize: 16, textAlign: 'center', marginBottom: 20, color: '#E5F4EF' },
   sectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 8, color: '#E5F4EF' },
+  exerciseHeader: { width: '100%', maxWidth: 720, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  addExerciseButton: { alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12, borderWidth: 1, borderColor: '#3D8B77', backgroundColor: '#0F2530', marginBottom: 12 },
+  addExerciseText: { color: '#9FE1C7', fontWeight: '700' },
+  exerciseRow: { justifyContent: 'space-between', marginBottom: 12 },
+  exerciseCard: { width: '48%', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530' },
+  exerciseCardTitle: { color: '#E5F4EF', fontWeight: '700', fontSize: 16 },
+  exerciseEmpty: { color: '#9CA3AF', textAlign: 'center', marginTop: 12 },
+  exerciseDetailTitle: { color: '#E5F4EF', fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  exerciseDetailBody: { color: '#C7D2D6', fontSize: 15, marginBottom: 12 },
+  mediaWrapper: { width: '100%', borderRadius: 12, overflow: 'hidden', marginBottom: 12, backgroundColor: '#0f2633' },
+  exerciseImage: { width: '100%', height: 220, backgroundColor: '#0f2633' },
+  videoLink: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+  videoLinkText: { color: '#9FE1C7', marginLeft: 8, flex: 1, textDecorationLine: 'underline' },
+  formatBar: { flexDirection: 'row', marginBottom: 6 },
+  formatButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginRight: 8 },
+  formatButtonActive: { backgroundColor: '#194055', borderColor: '#3D8B77' },
+  formatButtonText: { color: '#E5F4EF', fontWeight: '700' },
+  formatButtonTextActive: { color: '#9FE1C7' },
+  attachmentButton: { paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#3D8B77', backgroundColor: '#0F2530', marginTop: 8 },
+  attachmentButtonText: { color: '#9FE1C7', fontWeight: '700' },
+  attachmentPill: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 6 },
+  attachmentIcon: { marginRight: 8 },
+  attachmentText: { color: '#E5F4EF', flex: 1 },
+  attachmentRemove: { marginLeft: 8, padding: 4 },
+  mediaTypeRow: { flexDirection: 'row', marginTop: 4, marginBottom: 4 },
+  mediaTypeButton: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  videoPreview: { width: '100%', borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0f2633', padding: 8, marginBottom: 12 },
+  videoPlayer: { width: '100%', height: 220, backgroundColor: '#0f2633', borderRadius: 10 },
+  videoPreviewInner: { alignItems: 'center', justifyContent: 'center' },
+  videoPreviewText: { color: '#E5F4EF', marginTop: 6, textAlign: 'center' },
+  videoOverlay: { position: 'absolute', bottom: 8, right: 8, left: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },
+  mediaHint: { marginTop: 10, color: '#E5F4EF', fontWeight: '600' },
+  detailActionsRow: { flexDirection: 'row', marginTop: 12 },
 
-  label: { fontSize: 14, fontWeight: '600', marginBottom: 6 },
+  label: { color: '#ffffffff', fontSize: 14, fontWeight: '600', marginBottom: 6 },
 
   button: {
     backgroundColor: '#194055',   // Hintergrundfarbe
@@ -1719,6 +2285,28 @@ const formatDateDE = (iso: string) => {
   if (isNaN(d.getTime())) return iso;
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
