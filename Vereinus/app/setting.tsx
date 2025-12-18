@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#112a37',
   },
-  title: { fontSize: 22, fontWeight: '700', marginBottom: 16 },
+  title: { color: '#E5F4EF', fontSize: 22, fontWeight: '700', marginBottom: 16 },
   btn: { backgroundColor: '#A93226', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10 },
   btnText: { color: '#fff', fontWeight: '700' },
   btnSecondary: { backgroundColor: '#194055', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, marginTop: 8 },

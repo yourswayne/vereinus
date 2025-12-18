@@ -6,13 +6,30 @@ import Constants from 'expo-constants';
 const extra = (Constants as any).expoConfig?.extra || (Constants as any).manifest?.extra || {};
 const DEFAULT_URL = 'https://jeruntnmpdiijlqkfpfr.supabase.co';
 const DEFAULT_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplcnVudG5tcGRpaWpscWtmcGZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1MjAyOTUsImV4cCI6MjA3NjA5NjI5NX0.6s-8etdG2YALLnnq7ob8W0bw7sZj3_LsOU2UWXr4MyE';
-const url = (extra.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || DEFAULT_URL) as string;
-const anon = (extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_ANON) as string;
+const url = (extra.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || DEFAULT_URL) as string | undefined;
+const anon = (extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_ANON) as string | undefined;
 
-if (!url || !anon) {
-  // Avoid throwing at import time – provide a minimal fallback client so the app can render.
+// CHANGE: treat any non-empty url as valid (do not compare against DEFAULT_URL)
+const isPlaceholderProject = !url;
+const usingFallback = !url || !anon || isPlaceholderProject;
+
+if (usingFallback) {
+  // Avoid throwing at import time -- provide a minimal fallback client so the app can render.
   // eslint-disable-next-line no-console
-  console.warn('[Supabase] Missing URL or anon key. Check app.config.js extra or env file. URL present:', Boolean(url));
+  console.warn('[Supabase] Missing or placeholder Supabase config. Set EXPO_PUBLIC_SUPABASE_URL/EXPO_PUBLIC_SUPABASE_ANON_KEY via app.config.js or env. Using offline stub client.');
+}
+
+// Debug logs to confirm runtime values (remove or gate in production if desired)
+try {
+  // eslint-disable-next-line no-console
+  console.log('[Supabase] runtime config:', {
+    url: url ?? '<undefined>',
+    anon_present: !!anon,
+    isPlaceholderProject,
+    usingFallback,
+  });
+} catch (e) {
+  // ignore logging errors
 }
 
 function buildFallback() {
@@ -37,7 +54,7 @@ function buildFallback() {
   } as any;
 }
 
-export const supabase = (url && anon)
+export const supabase = (!usingFallback && url && anon)
   ? createClient(url, anon, {
       auth: {
         storage: AsyncStorage as any,
@@ -47,8 +64,6 @@ export const supabase = (url && anon)
       },
     })
   : buildFallback();
-
-// Duplicate unconditional client creation removed — use the conditional `export const supabase = (url && anon) ? createClient(...) : buildFallback();` above.
 
 export type Org = { id: string; name: string; logo_url: string | null };
 export type Group = { id: string; org_id: string; name: string; image_url: string | null };
