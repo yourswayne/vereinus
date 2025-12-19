@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -162,37 +162,39 @@ function SimpleDropdown<T extends { id: string; name: string }>(
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.dropdownOverlay} onPress={() => setOpen(false)} />
 
-        <View style={styles.dropdownPanel}>
-          <FlatList
-            keyboardShouldPersistTaps="handled"
-            data={data}
-            keyExtractor={(x) => x.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => {
-                  onChange(item.id);
-                  setOpen(false);
-                }}
-                style={styles.dropdownItem}
-              >
-                <Text numberOfLines={1}>{item.name}</Text>
-              </TouchableOpacity>
-            )}
-            ListFooterComponent={(
-              <TouchableOpacity
-                onPress={() => {
-                  onChange('__add__');
-                  setOpen(false);
-                }}
-                style={styles.dropdownItem}
-              >
-                <Text numberOfLines={1}>+ Liste hinzufuegen...</Text>
-              </TouchableOpacity>
-            )}
-          />
-          <TouchableOpacity onPress={() => setOpen(false)} style={styles.dropdownClose}>
-            <Text style={{ color: '#6B7280' }}>Schliessen</Text>
-          </TouchableOpacity>
+        <View pointerEvents="box-none" style={styles.dropdownCenterWrap}>
+          <View style={styles.dropdownPanel}>
+            <FlatList
+              keyboardShouldPersistTaps="handled"
+              data={data}
+              keyExtractor={(x) => x.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onPress={() => {
+                    onChange(item.id);
+                    setOpen(false);
+                  }}
+                  style={styles.dropdownItem}
+                >
+                  <Text numberOfLines={1} style={styles.dropdownItemText}>{item.name}</Text>
+                </TouchableOpacity>
+              )}
+              ListFooterComponent={(
+                <TouchableOpacity
+                  onPress={() => {
+                    onChange('__add__');
+                    setOpen(false);
+                  }}
+                  style={styles.dropdownItem}
+                >
+                  <Text numberOfLines={1} style={styles.dropdownItemText}>+ Liste hinzufuegen...</Text>
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity onPress={() => setOpen(false)} style={styles.dropdownClose}>
+              <Text style={styles.dropdownCloseText}>Schliessen</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </View>
@@ -862,7 +864,7 @@ export default function Tasklist() {
         )}
         <View style={styles.taskRow}>
           <View style={[styles.checkbox, styles.mr8, styles.checkboxDone]}>
-            <Text style={styles.checkboxText}>V</Text>
+            <Text style={styles.checkboxText}>X</Text>
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[styles.taskTitle, styles.through]}>{t.title}</Text>
@@ -943,46 +945,46 @@ export default function Tasklist() {
             if ((lists?.length ?? 0) > 0) setShowAddList(false);
           }}
         />
-        <View style={styles.dropdownPanel}>
-          <View style={{ padding: 12 }}>
-            <Text style={styles.label}>Neue Liste</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Name der Liste"
-              placeholderTextColor={'#95959588'}
-              value={addListName}
-              
-              onChangeText={setAddListName}
-              autoFocus
-            />
-            <View style={styles.row}>
-              <TouchableOpacity
-                onPress={() => {
-                  const name = addListName.trim();
-                  if (!name) return;
-                  const newL: TaskList = { id: uid(), name, tasks: [], archived: [] };
-                  setLists((prev) => [...prev, newL]);
-                  setSelectedListId(newL.id);
-                  setAddListName('');
-                  setShowAddList(false);
-                }}
-                style={[styles.btnLink, styles.mr8]}
-              >
-                <Text style={styles.btnLinkTextAdd}>Hinzufuegen</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                
-                  setAddListName('');
-                  // Navigate to index tab explicitly
-                  router.push('/');
-                  // Close modal afterwards (in case we remain on this route briefly)
-                  setShowAddList(false);
-                }}
-                style={styles.btnLink}
-              >
-                <Text style={styles.btnLinkTextCancel}>Abbrechen</Text>
-              </TouchableOpacity>
+        <View pointerEvents="box-none" style={styles.dropdownCenterWrap}>
+          <View style={styles.dropdownPanel}>
+            <View style={{ padding: 12 }}>
+              <Text style={styles.label}>Neue Liste</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Name der Liste"
+                placeholderTextColor={'#95959588'}
+                value={addListName}
+                onChangeText={setAddListName}
+                autoFocus
+              />
+              <View style={styles.row}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const name = addListName.trim();
+                    if (!name) return;
+                    const newL: TaskList = { id: uid(), name, tasks: [], archived: [] };
+                    setLists((prev) => [...prev, newL]);
+                    setSelectedListId(newL.id);
+                    setAddListName('');
+                    setShowAddList(false);
+                  }}
+                  style={[styles.btnLink, styles.mr8]}
+                >
+                  <Text style={styles.btnLinkTextAdd}>Hinzufuegen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setAddListName('');
+                    // Navigate to index tab explicitly
+                    router.push('/');
+                    // Close modal afterwards (in case we remain on this route briefly)
+                    setShowAddList(false);
+                  }}
+                  style={styles.btnLink}
+                >
+                  <Text style={styles.btnLinkTextCancel}>Abbrechen</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -1062,7 +1064,7 @@ export default function Tasklist() {
       {statusFilter !== 'done' && !!(currentList?.archived?.length ?? 0) && (
         <View style={{ marginTop: 16 }}>
           <TouchableOpacity onPress={() => setShowArchived((v) => !v)} style={[styles.row, { alignItems: 'center', justifyContent: 'space-between' }]}>
-            <Text style={styles.h2}>Archiviert</Text>
+            <Text style={[styles.h2, { bottom: 40 }]}>Archiviert</Text>
             <Ionicons name={showArchived ? 'chevron-up' : 'chevron-down'} size={18} color="#E5F4EF" />
           </TouchableOpacity>
           {showArchived && (
@@ -1136,32 +1138,38 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(7, 15, 23, 0.7)',
+  },
+  dropdownCenterWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
   },
   dropdownPanel: {
-    position: 'absolute',
-    top: 200,
-    left: 16,
-    right: 16,
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0F2530',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    maxHeight: 300,
+    borderColor: '#2A3E48',
+    maxHeight: 320,
     overflow: 'visible',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 6,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
   },
   dropdownItem: {
     paddingVertical: 12,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: '#1F3642',
   },
-  dropdownClose: { padding: 10, alignItems: 'center' },
+  dropdownItemText: { color: '#E5F4EF' },
+  dropdownClose: { padding: 10, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#1F3642' },
+  dropdownCloseText: { color: '#C7D2D6' },
 
   // Modal panel for iOS picker
   pickerPanel: {
