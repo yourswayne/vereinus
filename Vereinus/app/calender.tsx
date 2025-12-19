@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -40,7 +39,6 @@ type EventDraft = {
   end: Date;
   orgId: string | null;
   scope: 'self' | 'org';
-  broadcast: boolean;
 };
 
 type OrgRole = 'director' | 'teacher' | 'student';
@@ -130,12 +128,20 @@ export default function Calender() {
   const pinchStartHeight = useRef(hourHeight);
   const [localEvents, setLocalEvents] = useState<CalendarEvent[]>([]);
   const [remoteEvents, setRemoteEvents] = useState<CalendarEvent[]>([]);
-  const events = useMemo(() => [...remoteEvents, ...localEvents], [remoteEvents, localEvents]);
+  const events = useMemo(() => {
+    const map = new Map<string, CalendarEvent>();
+    [...remoteEvents, ...localEvents].forEach((evt) => {
+      const key = `${evt.id}-${evt.start}`;
+      map.set(key, evt);
+    });
+    return Array.from(map.values());
+  }, [remoteEvents, localEvents]);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [pickerYear, setPickerYear] = useState(referenceDate.getFullYear());
   const [eventModalVisible, setEventModalVisible] = useState(false);
   const [eventDraft, setEventDraft] = useState<EventDraft | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [roleByOrg, setRoleByOrg] = useState<Record<string, OrgRole>>({});
   const [eventDetail, setEventDetail] = useState<CalendarEvent | null>(null);
@@ -143,6 +149,15 @@ export default function Calender() {
   const [timePickerValue, setTimePickerValue] = useState(new Date());
   const [gridWidth, setGridWidth] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+  const handleScopeChange = (scope: EventDraft['scope']) => {
+    setEventDraft((prev) => {
+      if (!prev) return prev;
+      if (scope === 'self') {
+        return { ...prev, scope, orgId: null };
+      }
+      return { ...prev, scope };
+    });
+  };
 
   const [now, setNow] = useState(new Date());
   const weekStart = useMemo(() => startOfWeek(referenceDate), [referenceDate]);
@@ -157,11 +172,40 @@ export default function Calender() {
     return () => clearInterval(timer);
   }, []);
 
+  const refreshPersonalEvents = useCallback(async () => {
+    if (!sessionUserId) {
+      setLocalEvents([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from('personal_calendar_events')
+      .select('id,title,description,start,end')
+      .eq('user_id', sessionUserId)
+      .order('start', { ascending: true });
+    if (error) {
+      setLocalEvents([]);
+      return;
+    }
+    const mapped: CalendarEvent[] = (data ?? []).map((row: any) => ({
+      id: row.id,
+      title: row.title ?? '',
+      description: row.description ?? '',
+      start: new Date(row.start).toISOString(),
+      end: new Date(row.end).toISOString(),
+      orgId: null,
+      scope: 'self',
+      readOnly: false,
+      source: 'remote',
+    }));
+    setLocalEvents(mapped);
+  }, [sessionUserId]);
+
   useEffect(() => {
     let alive = true;
     (async () => {
       const { data: sessionData } = await supabase.auth.getSession();
       const userId = sessionData.session?.user?.id;
+      setSessionUserId(userId ?? null);
       if (!userId) {
         if (!alive) return;
         setOrgs([]);
@@ -248,6 +292,10 @@ export default function Calender() {
     refreshRemoteEvents();
   }, [refreshRemoteEvents]);
 
+  useEffect(() => {
+    refreshPersonalEvents();
+  }, [refreshPersonalEvents]);
+
   useFocusEffect(
     useCallback(() => {
       refreshRemoteEvents();
@@ -326,7 +374,6 @@ export default function Calender() {
         end,
         orgId: orgs[0]?.id ?? null,
         scope: 'self',
-        broadcast: false,
       });
       setEditingEventId(null);
       setEventDetail(null);
@@ -344,7 +391,15 @@ export default function Calender() {
       return;
     }
     if (eventDraft.scope === 'org' && eventDraft.orgId && roleByOrg[eventDraft.orgId] !== 'director') {
-      Alert.alert('Keine Berechtigung', 'Nur Direktoren können Termine für den gesamten Verein veröffentlichen.');
+      Alert.alert('Keine Berechtigung', 'Nur Direktoren koennen Termine fuer den gesamten Verein veroeffentlichen.');
+      return;
+    }
+    if (eventDraft.scope === 'org' && !eventDraft.orgId) {
+      Alert.alert('Verein fehlt', 'Bitte waehle einen Verein aus.');
+      return;
+    }
+    if (eventDraft.scope === 'self' && !sessionUserId) {
+      Alert.alert('Login erforderlich', 'Bitte melde dich an, um persoenliche Termine zu speichern.');
       return;
     }
     const eventId = editingEventId ?? `${Date.now()}`;
@@ -359,25 +414,68 @@ export default function Calender() {
       readOnly: false,
       source: 'local',
     };
-    setLocalEvents((prev) =>
-      editingEventId ? prev.map((evt) => (evt.id === eventId ? payload : evt)) : [...prev, payload],
-    );
+    if (eventDraft.scope === 'self' && sessionUserId) {
+      if (editingEventId) {
+        const { data, error } = await supabase
+          .from('personal_calendar_events')
+          .update({
+            title: payload.title,
+            description: payload.description,
+            start: payload.start,
+            end: payload.end,
+          })
+          .eq('id', editingEventId)
+          .eq('user_id', sessionUserId)
+          .select('id,title,description,start,end')
+          .single();
+        if (!error && data) {
+          payload.id = data.id;
+          payload.start = new Date(data.start).toISOString();
+          payload.end = new Date(data.end).toISOString();
+          setLocalEvents((prev) => prev.map((evt) => (evt.id === editingEventId ? payload : evt)));
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('personal_calendar_events')
+          .insert({
+            user_id: sessionUserId,
+            title: payload.title,
+            description: payload.description,
+            start: payload.start,
+            end: payload.end,
+          })
+          .select('id,title,description,start,end')
+          .single();
+        if (!error && data) {
+          payload.id = data.id;
+          payload.start = new Date(data.start).toISOString();
+          payload.end = new Date(data.end).toISOString();
+          setLocalEvents((prev) => [...prev, payload]);
+        }
+      }
+    } else {
+      // org scope: keep localEvents unchanged; remote fetch will refresh
+    }
     // close event modal inline to avoid referencing a callback declared later
     setEventModalVisible(false);
     setEventDraft(null);
     setEditingEventId(null);
-    if (eventDraft.scope === 'org' && eventDraft.broadcast) {
-      await supabase
-        .from('calendar_sync_queue')
-        .insert({
-          event_payload: payload,
-          org_id: eventDraft.orgId,
-        })
-        .catch(() => {
-          // queue table optional during prototype
-        });
+    if (eventDraft.scope === 'org' && eventDraft.orgId) {
+      try {
+        await supabase
+          .from('calendar_sync_queue')
+          .insert({
+            event_payload: payload,
+            org_id: eventDraft.orgId,
+          });
+        refreshRemoteEvents();
+      } catch {
+        // queue table optional during prototype
+      }
+    } else {
+      refreshPersonalEvents();
     }
-  }, [editingEventId, eventDraft, roleByOrg]);
+  }, [editingEventId, eventDraft, roleByOrg, sessionUserId, refreshPersonalEvents, refreshRemoteEvents]);
 
   const upcomingEventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -422,7 +520,6 @@ export default function Calender() {
       end: new Date(event.end),
       orgId: event.orgId ?? null,
       scope: event.scope,
-      broadcast: false,
     });
     setEditingEventId(event.id);
     setTimePickerField(null);
@@ -435,6 +532,45 @@ export default function Calender() {
     beginEditEvent(eventDetail);
     setEventDetail(null);
   }, [beginEditEvent, eventDetail]);
+
+  const deleteEvent = useCallback(async (evt: CalendarEvent) => {
+    if (evt.scope === 'self') {
+      if (!sessionUserId) {
+        Alert.alert('Login erforderlich', 'Bitte melde dich an, um Termine zu loeschen.');
+        return false;
+      }
+      const { error } = await supabase
+        .from('personal_calendar_events')
+        .delete()
+        .eq('id', evt.id)
+        .eq('user_id', sessionUserId);
+      if (error) {
+        Alert.alert('Fehler', 'Termin konnte nicht gelöscht werden.');
+        return false;
+      }
+      setLocalEvents((prev) => prev.filter((e) => e.id !== evt.id));
+      return true;
+    }
+    if (evt.scope === 'org' && evt.orgId) {
+      if (roleByOrg[evt.orgId] !== 'director') {
+        Alert.alert('Keine Berechtigung', 'Nur Direktoren können Vereins-Termine löschen.');
+        return false;
+      }
+      try {
+        await supabase
+          .from('calendar_sync_queue')
+          .delete()
+          .eq('org_id', evt.orgId)
+          .or(`event_payload->>id.eq.${evt.id}`);
+        refreshRemoteEvents();
+        return true;
+      } catch {
+        Alert.alert('Fehler', 'Termin konnte nicht gelöscht werden.');
+        return false;
+      }
+    }
+    return false;
+  }, [refreshRemoteEvents, roleByOrg, sessionUserId]);
 
   const closeEventModal = useCallback(() => {
     setEventModalVisible(false);
@@ -624,9 +760,9 @@ export default function Calender() {
 
                     {dayColumnWidth > 0 && weekEventLayouts.length > 0 && (
                       <View pointerEvents="box-none" style={styles.eventOverlay}>
-                        {weekEventLayouts.map((layout) => (
+                        {weekEventLayouts.map((layout, idx) => (
                           <Pressable
-                            key={`${layout.event.id}-${layout.event.start}`}
+                            key={`${layout.event.id}-${layout.event.start}-${idx}`}
                             style={[
                               styles.eventBlock,
                               {
@@ -788,6 +924,29 @@ export default function Calender() {
             {!!eventDetail?.description && (
               <Text style={styles.eventDetailDescription}>{eventDetail.description}</Text>
             )}
+            {eventDetail && (eventDetail.scope === 'self' || (eventDetail.scope === 'org' && eventDetail.orgId && roleByOrg[eventDetail.orgId] === 'director')) && (
+              <View style={{ flexDirection: 'row', marginTop: 12 }}>
+
+                <TouchableOpacity
+                  style={[styles.modalCancelButton, { flex: 1, alignItems: 'center' }]}
+                  onPress={() => {
+                    Alert.alert('Termin löschen?', 'Dieser Termin wird entfernt.', [
+                      { text: 'Abbrechen', style: 'cancel' },
+                      {
+                        text: 'Löschen',
+                        style: 'destructive',
+                        onPress: async () => {
+                          const ok = await deleteEvent(eventDetail);
+                          if (ok) setEventDetail(null);
+                        },
+                      },
+                    ]);
+                  }}
+                >
+                  <Text style={[styles.modalCancelText, { color: '#ffb4b4', fontWeight: '700' }]}>Löschen</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -795,7 +954,7 @@ export default function Calender() {
       <Modal
         visible={eventModalVisible}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={closeEventModal}
       >
         <View style={styles.modalBackdrop}>
@@ -858,8 +1017,29 @@ export default function Calender() {
                 </View>
               </View>
             )}
-
-            {orgs.length > 0 && (
+            <View style={styles.scopeRow}>
+              <Text style={styles.timeInputLabel}>Sichtbarkeit</Text>
+              <View style={styles.scopePills}>
+                {[
+                  { key: 'self', label: 'Nur ich' },
+                  { key: 'org', label: 'Verein' },
+                ].map((scope) => (
+                  <Pressable
+                    key={scope.key}
+                    style={[styles.scopeChip, eventDraft?.scope === scope.key && styles.scopeChipActive]}
+                    onPress={() => handleScopeChange(scope.key as EventDraft['scope'])}
+                  >
+                    <Text
+                      style={[styles.scopeChipText, eventDraft?.scope === scope.key && styles.scopeChipTextActive]}
+                    >
+                      {scope.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+            
+            {eventDraft?.scope === 'org' && orgs.length > 0 && (
               <View style={styles.orgPickerSection}>
                 <Text style={styles.timeInputLabel}>Verein</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.orgChipsRow}>
@@ -877,46 +1057,16 @@ export default function Calender() {
                     </Pressable>
                   ))}
                 </ScrollView>
+                <Text style={[styles.broadcastLabel, { marginTop: 8 }]}>
+                  Termin wird automatisch mit dem Verein geteilt.
+                </Text>
               </View>
             )}
 
-            <View style={styles.scopeRow}>
-              <Text style={styles.timeInputLabel}>Sichtbarkeit</Text>
-              <View style={styles.scopePills}>
-                {[
-                  { key: 'self', label: 'Nur ich' },
-                  { key: 'org', label: 'Verein' },
-                ].map((scope) => (
-                  <Pressable
-                    key={scope.key}
-                    style={[styles.scopeChip, eventDraft?.scope === scope.key && styles.scopeChipActive]}
-                    onPress={() =>
-                      setEventDraft((prev) =>
-                        prev ? { ...prev, scope: scope.key as EventDraft['scope'] } : prev,
-                      )
-                    }
-                  >
-                    <Text
-                      style={[styles.scopeChipText, eventDraft?.scope === scope.key && styles.scopeChipTextActive]}
-                    >
-                      {scope.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
 
-            <View style={styles.broadcastRow}>
-              <Text style={styles.broadcastLabel}>Mit Ankündigung teilen</Text>
-              <Switch
-                trackColor={{ false: '#2c404b', true: '#1c9a93' }}
-                thumbColor="#E5F4EF"
-                value={eventDraft?.broadcast ?? false}
-                onValueChange={(value) =>
-                  setEventDraft((prev) => (prev ? { ...prev, broadcast: value } : prev))
-                }
-              />
-            </View>
+
+            
+
 
             <View style={styles.modalButtonsRow}>
               <TouchableOpacity style={styles.modalCancelButton} onPress={closeEventModal}>
@@ -1403,12 +1553,6 @@ const styles = StyleSheet.create({
     color: '#0a1c27',
     fontWeight: '600',
   },
-  broadcastRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
   broadcastLabel: {
     color: '#E5F4EF',
   },
@@ -1426,6 +1570,13 @@ const styles = StyleSheet.create({
   modalSaveText: {
     color: '#0a1c27',
     fontWeight: '600',
+    
   },
 }); 
+
+
+
+
+
+
 

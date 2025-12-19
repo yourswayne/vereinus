@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,18 +7,18 @@ import {
   Image,
   TouchableOpacity,
   FlatList,
-  Alert,
   Platform,
   Modal,
   Pressable,
+  Alert,
   useColorScheme,
   ScrollView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
+import { supabase } from '../lib/supabase';
 
 // --- Types ---
 type Priority = 'low' | 'medium' | 'high';
@@ -46,7 +46,6 @@ type TaskList = {
 // --- Helpers ---
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-const formatDate = (s?: string) => (s ? s : '');
 const getDurationMinutes = (start?: string, end?: string) => {
   if (!start || !end) return undefined;
   const toMs = (v: string) => {
@@ -137,7 +136,7 @@ function SimpleDropdown<T extends { id: string; name: string }>(
     data,
     selectedId,
     onChange,
-    placeholder = 'Liste wählen…',
+    placeholder = 'Liste waehlen',
     style,
   }: {
     data: T[];
@@ -157,43 +156,45 @@ function SimpleDropdown<T extends { id: string; name: string }>(
         style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
       >
         <Text numberOfLines={1} style={style}>{selected?.name ?? placeholder}</Text>
-        <Text>▾</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color="#E5F4EF" />
       </TouchableOpacity>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.dropdownOverlay} onPress={() => setOpen(false)} />
 
-        <View style={styles.dropdownPanel}>
-          <FlatList
-            keyboardShouldPersistTaps="handled"
-            data={data}
-            keyExtractor={(x) => x.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                onPress={() => {
-                  onChange(item.id);
-                  setOpen(false);
-                }}
-                style={styles.dropdownItem}
-              >
-                <Text numberOfLines={1}>{item.name}</Text>
-              </TouchableOpacity>
-            )}
-            ListFooterComponent={(
-              <TouchableOpacity
-                onPress={() => {
-                  onChange('__add__');
-                  setOpen(false);
-                }}
-                style={styles.dropdownItem}
-              >
-                <Text numberOfLines={1}>+ Liste hinzufügen...</Text>
-              </TouchableOpacity>
-            )}
-          />
-          <TouchableOpacity onPress={() => setOpen(false)} style={styles.dropdownClose}>
-            <Text style={{ color: '#6B7280' }}>Schließen</Text>
-          </TouchableOpacity>
+        <View pointerEvents="box-none" style={styles.dropdownCenterWrap}>
+          <View style={styles.dropdownPanel}>
+            <FlatList
+              keyboardShouldPersistTaps="handled"
+              data={data}
+              keyExtractor={(x) => x.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onPress={() => {
+                    onChange(item.id);
+                    setOpen(false);
+                  }}
+                  style={styles.dropdownItem}
+                >
+                  <Text numberOfLines={1} style={styles.dropdownItemText}>{item.name}</Text>
+                </TouchableOpacity>
+              )}
+              ListFooterComponent={(
+                <TouchableOpacity
+                  onPress={() => {
+                    onChange('__add__');
+                    setOpen(false);
+                  }}
+                  style={styles.dropdownItem}
+                >
+                  <Text numberOfLines={1} style={styles.dropdownItemText}>+ Liste hinzufuegen...</Text>
+                </TouchableOpacity>
+              )}
+            />
+            <TouchableOpacity onPress={() => setOpen(false)} style={styles.dropdownClose}>
+              <Text style={styles.dropdownCloseText}>Schliessen</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </View>
@@ -274,7 +275,7 @@ const DateRangeInputs = ({
     setPicker(null);
   };
 
-  // iOS: direkte kompakte Picker ohne zusätzliche Inputs
+  // iOS: direkte kompakte Picker ohne zusaetzliche Inputs
   if (Platform.OS === 'ios') {
     const startDate = parseDateTime(startAt) ?? new Date();
     const endDate = parseDateTime(endAt) ?? new Date();
@@ -317,7 +318,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('start')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -339,7 +340,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('end')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -379,10 +380,10 @@ const DateRangeInputs = ({
     );
   }
 
-  const startDateLabel = startAt?.split(' ')[0] ?? 'Datum wählen…';
-  const startTimeLabel = startAt?.split(' ')[1] ?? 'Uhrzeit hinzufügen (optional)';
-  const endDateLabel = endAt?.split(' ')[0] ?? 'Datum wählen…';
-  const endTimeLabel = endAt?.split(' ')[1] ?? 'Uhrzeit hinzufügen (optional)';
+  const startDateLabel = startAt?.split(' ')[0] ?? 'Datum waehlen';
+  const startTimeLabel = startAt?.split(' ')[1] ?? 'Uhrzeit hinzufuegen (optional)';
+  const endDateLabel = endAt?.split(' ')[0] ?? 'Datum waehlen';
+  const endTimeLabel = endAt?.split(' ')[1] ?? 'Uhrzeit hinzufuegen (optional)';
 
   return (
     <View>
@@ -435,12 +436,12 @@ const DateRangeInputs = ({
         <View style={styles.row}>
           {!!startAt && (
             <TouchableOpacity onPress={() => clearDate('start')} style={[styles.btnLink, styles.mr8]}>
-              <Text style={styles.btnLinkTextMuted}>Von löschen</Text>
+              <Text style={styles.btnLinkTextMuted}>Von loeschen</Text>
             </TouchableOpacity>
           )}
           {!!endAt && (
             <TouchableOpacity onPress={() => clearDate('end')} style={styles.btnLink}>
-              <Text style={styles.btnLinkTextMuted}>Bis löschen</Text>
+              <Text style={styles.btnLinkTextMuted}>Bis loeschen</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -452,6 +453,7 @@ const DateRangeInputs = ({
 // --- Main ---
 export default function Tasklist() {
   const router = useRouter();
+  const [currentSessionUserId, setCurrentSessionUserId] = useState<string | null>(null);
   // Start without default lists so the create-list flow
   // can enforce first-time creation when empty
   const [lists, setLists] = useState<TaskList[]>([]);
@@ -465,20 +467,15 @@ export default function Tasklist() {
   const [showCreate, setShowCreate] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
-  const [taskPriority, setTaskPriority] = useState<Priority | undefined>(undefined);
+  const [taskPriority, setTaskPriority] = useState<Priority | undefined>('medium');
   const [taskStart, setTaskStart] = useState<string>('');
   const [taskEnd, setTaskEnd] = useState<string>('');
 
   const [showAddList, setShowAddList] = useState(false);
   const [addListName, setAddListName] = useState('');
-  const [query, setQuery] = useState('');
-  const [showFilter, setShowFilter] = useState(false);
-  type SortBy = 'created' | 'datetime' | 'priority';
-  type SortDir = 'asc' | 'desc';
-  type GroupBy = 'none' | 'created' | 'datetime' | 'priority';
-  const [sortBy, setSortBy] = useState<SortBy>('created');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  type StatusFilter = 'all' | 'upcoming' | 'overdue' | 'done';
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [showArchived, setShowArchived] = useState(false);
 
   const currentList = useMemo(() => lists.find((l) => l.id === selectedListId), [lists, selectedListId]);
 
@@ -486,72 +483,138 @@ export default function Tasklist() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const STORAGE_KEY = '@vereinus/tasklists';
   const STORAGE_SEL = '@vereinus/selectedListId';
+  const storageKey = useMemo(
+    () => (currentSessionUserId ? `${STORAGE_KEY}:${currentSessionUserId}` : STORAGE_KEY),
+    [currentSessionUserId],
+  );
+  const storageSelKey = useMemo(
+    () => (currentSessionUserId ? `${STORAGE_SEL}:${currentSessionUserId}` : STORAGE_SEL),
+    [currentSessionUserId],
+  );
   const lastSelectedIdRef = useRef<string | undefined>(undefined);
 
+  const loadRemoteState = useCallback(async (userId: string) => {
+    try {
+      const table: any = supabase?.from?.('tasklist_state');
+      if (!table || typeof table.select !== 'function') return null;
+      const query: any = table
+        .select('data, selected_list_id')
+        .eq('user_id', userId);
+      const res = query?.maybeSingle
+        ? await query.maybeSingle()
+        : await query.single?.();
+      const data = (res as any)?.data;
+      const error = (res as any)?.error;
+      if (error || !data) return null;
+      return data as { data: TaskList[]; selected_list_id?: string | null };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const saveRemoteState = useCallback(async (userId: string, payload: { data: TaskList[]; selected_list_id?: string | null }) => {
+    try {
+      const table: any = supabase?.from?.('tasklist_state');
+      if (!table || typeof table.upsert !== 'function') return;
+      await table.upsert({
+        user_id: userId,
+        data: payload.data,
+        selected_list_id: payload.selected_list_id ?? null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+    } catch {
+      // ignore remote write errors to avoid breaking offline mode
+    }
+  }, []);
+
   useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data }: { data: any }) => {
+      if (!cancelled) setCurrentSessionUserId(data.session?.user?.id ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event: string, session: any) => {
+      if (!cancelled) setCurrentSessionUserId(session?.user?.id ?? null);
+    });
+    return () => {
+      cancelled = true;
+      sub?.subscription?.unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Reset state when switching users to avoid showing previous data while loading
+    setLists([]);
+    setSelectedListId(undefined);
+    lastSelectedIdRef.current = undefined;
     (async () => {
       try {
-        const [rawLists, rawSel] = await Promise.all([AsyncStorage.getItem(STORAGE_KEY), AsyncStorage.getItem(STORAGE_SEL)]);
+        const [rawLists, rawSel] = await Promise.all([AsyncStorage.getItem(storageKey), AsyncStorage.getItem(storageSelKey)]);
         if (rawLists) {
           const parsed: TaskList[] = JSON.parse(rawLists);
           setLists(parsed);
           if (rawSel) setSelectedListId(rawSel);
           else if (parsed[0]) setSelectedListId(parsed[0].id);
         } else {
-          setSelectedListId((prev) => prev ?? lists[0]?.id);
+          setLists([]);
+          setSelectedListId(undefined);
         }
-      } catch { }
+        if (currentSessionUserId) {
+          const remote = await loadRemoteState(currentSessionUserId);
+          if (remote?.data) {
+            setLists(remote.data);
+            setSelectedListId(remote.selected_list_id ?? remote.data[0]?.id);
+          }
+        }
+      } catch {
+        setLists([]);
+        setSelectedListId(undefined);
+      }
     })();
-  }, []);
-
-  // Show or hide the add-list popup based on focus and current list count.
-  useFocusEffect(
-    useCallback(() => {
-      if ((lists?.length ?? 0) === 0) setShowAddList(true);
-      else setShowAddList(false);
-      return () => setShowAddList(false);
-    }, [lists])
-  );
+  }, [storageKey, storageSelKey, currentSessionUserId, loadRemoteState]);
 
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(lists)).catch(() => { });
-      if (selectedListId) AsyncStorage.setItem(STORAGE_SEL, selectedListId).catch(() => { });
+      AsyncStorage.setItem(storageKey, JSON.stringify(lists)).catch(() => { });
+      if (selectedListId) AsyncStorage.setItem(storageSelKey, selectedListId).catch(() => { });
+      else AsyncStorage.removeItem(storageSelKey).catch(() => { });
+      if (currentSessionUserId) {
+        saveRemoteState(currentSessionUserId, { data: lists, selected_list_id: selectedListId ?? null });
+      }
     }, 200);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [lists, selectedListId]);
+  }, [lists, selectedListId, storageKey, storageSelKey, currentSessionUserId, saveRemoteState]);
   // Remove one-time gating: focus effect controls showing the add-list popup
 
   // Intercept special dropdown selection to add new list
   useEffect(() => {
     if (selectedListId === '__add__') {
       setShowAddList(true);
-      // revert back to previous selection (if any)
       setSelectedListId(lastSelectedIdRef.current ?? lists[0]?.id);
     } else {
       lastSelectedIdRef.current = selectedListId;
     }
   }, [selectedListId, lists]);
 
-  const deleteCurrentList = () => {
+  const deleteCurrentList = useCallback(() => {
     if (!currentList) return;
-    Alert.alert('Liste löschen?', 'Diese Liste und alle Aufgaben werden gelöscht.', [
+    Alert.alert('Liste loeschen', `Soll die Liste "${currentList.name}" wirklich geloescht werden?`, [
       { text: 'Abbrechen', style: 'cancel' },
       {
-        text: 'Löschen',
+        text: 'Loeschen',
         style: 'destructive',
-        onPress: () =>
+        onPress: () => {
           setLists((prev) => {
             const next = prev.filter((l) => l.id !== currentList.id);
-            setSelectedListId(next[0]?.id);
+            setSelectedListId((prevSel) => (prevSel === currentList.id ? next[0]?.id : prevSel));
             return next;
-          }),
+          });
+        },
       },
     ]);
-  };
+  }, [currentList]);
 
   // --- Aufgaben ---
   const addTask = () => {
@@ -578,7 +641,7 @@ export default function Tasklist() {
     setShowCreate(false);
   };
 
-  const completeAndArchive = (taskId: string) => {
+  const completeAndArchive = useCallback((taskId: string) => {
     if (!currentList) return;
     setLists((prev) =>
       prev.map((l) => {
@@ -596,9 +659,9 @@ export default function Tasklist() {
       const { [taskId]: _, ...rest } = d;
       return rest;
     });
-  };
+  }, [currentList]);
 
-  const restoreFromArchive = (taskId: string) => {
+  const restoreFromArchive = useCallback((taskId: string) => {
     if (!currentList) return;
     setLists((prev) =>
       prev.map((l) => {
@@ -611,13 +674,13 @@ export default function Tasklist() {
         return { ...l, archived: remainingArchived, tasks: [restored, ...tasksNoDup] };
       }),
     );
-  };
+  }, [currentList]);
 
   // Draft editing
-  const beginEdit = (task: Task) => {
+  const beginEdit = useCallback((task: Task) => {
     setEditingId(task.id);
     setDrafts((d) => ({ ...d, [task.id]: JSON.parse(JSON.stringify(task)) }));
-  };
+  }, []);
   const updateDraft = (patch: Partial<Task>) => {
     if (!editingId) return;
     setDrafts((d) => ({ ...d, [editingId]: { ...(d[editingId] as Task), ...patch } }));
@@ -645,77 +708,109 @@ export default function Tasklist() {
     });
   };
 
-  const deleteTask = (taskId: string) => {
+  const deleteTask = useCallback((taskId: string) => {
     if (!currentList) return;
     setLists((prev) => prev.map((l) => (l.id === currentList.id ? { ...l, tasks: l.tasks.filter((t) => t.id !== taskId) } : l)));
-  };
-  const renderProcessedItem = ({ item }: { item: any }) => {
-    if (item && (item as any)._type === 'header') {
-      const h = item as any;
-      return <Text style={[styles.h2, { marginTop: 12 }]}>{h.label}</Text>;
-    }
-    return renderTaskItem({ item } as any);
-  };
+  }, [currentList]);
 
   type ListEntry = any;
-  const processTasks = (tasks: Task[], q: string): ListEntry[] => {
-    const queryLc = q.trim().toLowerCase();
-    let items = tasks.filter((t) => !queryLc || t.title.toLowerCase().includes(queryLc));
-    const prioRank = (p?: Priority) => (!p ? 0 : p === 'low' ? 1 : p === 'medium' ? 2 : 3);
-    items = items.slice().sort((a, b) => {
-      let ka = 0, kb = 0;
-      if (sortBy === 'created') {
-        ka = parseDateTime(a.createdAt ?? '')?.getTime?.() ?? 0;
-        kb = parseDateTime(b.createdAt ?? '')?.getTime?.() ?? 0;
-      } else if (sortBy === 'datetime') {
-        ka = parseDateTime(a.startAt ?? a.endAt ?? '')?.getTime?.() ?? 0;
-        kb = parseDateTime(b.startAt ?? b.endAt ?? '')?.getTime?.() ?? 0;
-      } else if (sortBy === 'priority') {
-        ka = prioRank(a.priority);
-        kb = prioRank(b.priority);
-      }
-      const diff = ka - kb;
-      return sortDir === 'asc' ? diff : -diff;
-    });
-    if (groupBy === 'none') return items;
-    const groups = new Map<string, { key: string; label: string; items: Task[] }>();
-    const labelFor = (t: Task) => {
-      if (groupBy === 'priority') {
-        if (!t.priority) return 'Priorität: Keine';
-        return t.priority === 'low' ? 'Priorität: Niedrig' : t.priority === 'medium' ? 'Priorität: Mittel' : 'Priorität: Hoch';
-      }
-      const d = groupBy === 'created' ? parseDateTime(t.createdAt) : parseDateTime(t.startAt ?? t.endAt);
-      if (!d) return 'Ohne Datum';
-      return toDateStringDE(d);
-    };
-    for (const t of items) {
-      const label = labelFor(t);
-      if (!groups.has(label)) groups.set(label, { key: label, label, items: [] });
-      groups.get(label)!.items.push(t);
+  const visibleTasks = useMemo(() => {
+    const now = new Date();
+    const tasks = currentList?.tasks ?? [];
+    const archived = currentList?.archived ?? [];
+    if (statusFilter === 'done') {
+      const doneActive = tasks.filter((t) => t.done);
+      const archivedIds = new Set(archived.map((a) => a.id));
+      const onlyActiveDone = doneActive.filter((t) => !archivedIds.has(t.id));
+      return [...archived, ...onlyActiveDone];
     }
+    if (statusFilter === 'overdue') {
+      return tasks.filter((t) => {
+        if (t.done) return false;
+        const dt = parseDateTime(t.endAt || t.startAt);
+        return !!dt && dt.getTime() < now.getTime();
+      });
+    }
+    if (statusFilter === 'upcoming') {
+      return tasks.filter((t) => {
+        if (t.done) return false;
+        const dt = parseDateTime(t.endAt || t.startAt);
+        return !dt || dt.getTime() >= now.getTime();
+      });
+    }
+    // 'all': show everything in the active list regardless of date
+    return tasks;
+  }, [currentList, statusFilter]);
+
+  const groupedEntries = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; items: Task[] }>();
+    const add = (t: Task) => {
+      const d = parseDateTime(t.startAt ?? t.endAt);
+      const key = d ? toDateString(d) : 'nodate';
+      const weekday = d ? d.toLocaleDateString('de-DE', { weekday: 'long' }) : '';
+      const label = d ? `${toDateStringDE(d)}   ${weekday}` : 'Ohne Datum';
+      if (!groups.has(key)) groups.set(key, { key, label, items: [] });
+      groups.get(key)!.items.push(t);
+    };
+    visibleTasks.forEach(add);
+    const sorted = Array.from(groups.values()).sort((a, b) => {
+      if (a.key === 'nodate') return 1;
+      if (b.key === 'nodate') return -1;
+      return a.key.localeCompare(b.key);
+    });
     const out: ListEntry[] = [];
-    for (const g of groups.values()) {
+    sorted.forEach((g) => {
       out.push({ _type: 'header', key: g.key, label: g.label });
       out.push(...g.items);
-    }
+    });
     return out;
-  };
+  }, [visibleTasks]);
+  const processedTasks = groupedEntries;
+  const processedArchived = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; items: Task[] }>();
+    const archived = currentList?.archived ?? [];
+    for (const t of archived) {
+      const d = parseDateTime(t.startAt ?? t.endAt);
+      const key = d ? toDateString(d) : 'nodate';
+      const weekday = d ? d.toLocaleDateString('de-DE', { weekday: 'long' }) : '';
+      const label = d ? `${toDateStringDE(d)}   ${weekday}` : 'Ohne Datum';
+      if (!groups.has(key)) groups.set(key, { key, label, items: [] });
+      groups.get(key)!.items.push(t);
+    }
+    const sorted = Array.from(groups.values()).sort((a, b) => {
+      if (a.key === 'nodate') return 1;
+      if (b.key === 'nodate') return -1;
+      return a.key.localeCompare(b.key);
+    });
+    const out: ListEntry[] = [];
+    sorted.forEach((g) => {
+      out.push({ _type: 'header', key: g.key, label: g.label });
+      out.push(...g.items);
+    });
+    return out;
+  }, [currentList]);
+
   // --- Render ---
-  const getPriorityFlag = (prio: Priority) => {
+  const getPriorityFlag = useCallback((prio: Priority) => {
     try {
       if (prio === 'low') return require('../assets/images/flagg.png');
       if (prio === 'medium') return require('../assets/images/flago.png');
       if (prio === 'high') return require('../assets/images/flagr.png');
-      return undefined as any;
     } catch {
-      return undefined as any;
+      return undefined;
     }
-  };
+    return undefined;
+  }, []);
 
-  const renderTaskItem = ({ item: t }: { item: Task }) => {
+  const renderTaskItem = useCallback(({ item: t }: { item: Task }) => {
     const topLine = buildTopLine(t.startAt, t.endAt);
     return (
-      <TouchableOpacity activeOpacity={0.7} onPress={() => beginEdit(t)} style={styles.taskCard}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => beginEdit(t)}
+        onLongPress={() => beginEdit(t)}
+        style={styles.taskCard}
+      >
         {!!topLine && (
           <View style={styles.metaRow}>
             <Text style={styles.metaStrong}>{topLine.trim()}</Text>
@@ -748,19 +843,90 @@ export default function Tasklist() {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [beginEdit, completeAndArchive, deleteTask, getPriorityFlag]);
+
+  const renderArchivedItem = useCallback(({ item }: { item: any }) => {
+    if ((item as any)._type === 'header') {
+      const h = item as any;
+      return <Text style={[styles.h2, { marginTop: 12 }]}>{h.label}</Text>;
+    }
+    const t = item as Task;
+    const topLine = buildTopLine(t.startAt, t.endAt);
+    return (
+      <View style={[styles.taskCard, styles.archivedCard]}>
+        {!!topLine && (
+          <View style={styles.metaRow}>
+            <Text style={styles.metaStrong}>{topLine.trim()}</Text>
+            {t.priority && (
+              <Image source={getPriorityFlag(t.priority)} style={styles.flagIcon} />
+            )}
+          </View>
+        )}
+        <View style={styles.taskRow}>
+          <View style={[styles.checkbox, styles.mr8, styles.checkboxDone]}>
+            <Text style={styles.checkboxText}>X</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.taskTitle, styles.through]}>{t.title}</Text>
+            {!!t.description && (
+              <Text style={[styles.taskDesc, styles.through]} numberOfLines={2}>
+                {t.description}
+              </Text>
+            )}
+            <TouchableOpacity onPress={() => restoreFromArchive(t.id)} style={[styles.btnLink, { paddingLeft: 0 }]}>
+              <Text style={styles.btnLinkText}>Wiederherstellen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }, [getPriorityFlag, restoreFromArchive]);
+
+  const renderProcessedItem = useCallback(({ item }: { item: any }) => {
+    if (item && (item as any)._type === 'header') {
+      const h = item as any;
+      return <Text style={[styles.h2, { marginTop: 12 }]}>{h.label}</Text>;
+    }
+    if (statusFilter === 'done') {
+      return renderArchivedItem({ item });
+    }
+    return renderTaskItem({ item } as any);
+  }, [renderTaskItem, renderArchivedItem, statusFilter]);
 
   return (
     <View style={styles.container}>
       <Text style={styles.h1}>Aufgaben</Text>
 
-      <View style={styles.row }>
+      <View style={[styles.row, styles.headerRow]}>
         <View style={[styles.col, styles.mr8]}>
-          <SimpleDropdown data={lists} selectedId={selectedListId} onChange={(val) => setSelectedListId(val)} placeholder="Liste wählen…" style={{ color: '#FFFFFF' }} />
+          <SimpleDropdown
+            data={lists}
+            selectedId={selectedListId}
+            onChange={(val) => setSelectedListId(val)}
+            placeholder="Liste waehlen"
+            style={{ color: '#FFFFFF' }}
+          />
         </View>
         <TouchableOpacity onPress={deleteCurrentList} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>🗑️ Liste</Text>
+          <Text style={styles.iconBtnText}>Liste loeschen</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={[styles.row, styles.statusRow]}>
+        {[
+          { key: 'all', label: 'Alle' },
+          { key: 'upcoming', label: 'Bevorstehend' },
+          { key: 'overdue', label: 'Ueberfaellig' },
+          { key: 'done', label: 'Erledigt' },
+        ].map((s) => (
+          <TouchableOpacity
+            key={s.key}
+            onPress={() => setStatusFilter(s.key as StatusFilter)}
+            style={[styles.filterChip, statusFilter === s.key && styles.filterChipActive]}
+          >
+            <Text style={[styles.filterChipText, statusFilter === s.key && styles.filterChipTextActive]}>{s.label}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       <Modal
@@ -779,131 +945,56 @@ export default function Tasklist() {
             if ((lists?.length ?? 0) > 0) setShowAddList(false);
           }}
         />
-        <View style={styles.dropdownPanel}>
-          <View style={{ padding: 12 }}>
-            <Text style={styles.label}>Neue Liste</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Name der Liste"
-              placeholderTextColor={'#95959588'}
-              value={addListName}
-              
-              onChangeText={setAddListName}
-              autoFocus
-            />
-            <View style={styles.row}>
-              <TouchableOpacity
-                onPress={() => {
-                  const name = addListName.trim();
-                  if (!name) return;
-                  const newL: TaskList = { id: uid(), name, tasks: [], archived: [] };
-                  setLists((prev) => [...prev, newL]);
-                  setSelectedListId(newL.id);
-                  setAddListName('');
-                  setShowAddList(false);
-                }}
-                style={[styles.btnLink, styles.mr8]}
-              >
-                <Text style={styles.btnLinkTextAdd}>Hinzufügen</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                
-                  setAddListName('');
-                  // Navigate to index tab explicitly
-                  router.push('/');
-                  // Close modal afterwards (in case we remain on this route briefly)
-                  setShowAddList(false);
-                }}
-                style={styles.btnLink}
-              >
-                <Text style={styles.btnLinkTextCancel}>Abbrechen</Text>
-              </TouchableOpacity>
+        <View pointerEvents="box-none" style={styles.dropdownCenterWrap}>
+          <View style={styles.dropdownPanel}>
+            <View style={{ padding: 12 }}>
+              <Text style={styles.label}>Neue Liste</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Name der Liste"
+                placeholderTextColor={'#95959588'}
+                value={addListName}
+                onChangeText={setAddListName}
+                autoFocus
+              />
+              <View style={styles.row}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const name = addListName.trim();
+                    if (!name) return;
+                    const newL: TaskList = { id: uid(), name, tasks: [], archived: [] };
+                    setLists((prev) => [...prev, newL]);
+                    setSelectedListId(newL.id);
+                    setAddListName('');
+                    setShowAddList(false);
+                  }}
+                  style={[styles.btnLink, styles.mr8]}
+                >
+                  <Text style={styles.btnLinkTextAdd}>Hinzufuegen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setAddListName('');
+                    // Navigate to index tab explicitly
+                    router.push('/');
+                    // Close modal afterwards (in case we remain on this route briefly)
+                    setShowAddList(false);
+                  }}
+                  style={styles.btnLink}
+                >
+                  <Text style={styles.btnLinkTextCancel}>Abbrechen</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
       </Modal>
 
-      <View style={[styles.row, { alignItems: 'center' }]}>
-        <Ionicons name="search" size={20} color="#6B7280" style={{ marginRight: 8 }} />
-        <TextInput
-          placeholder="Suchen…"
-          placeholderTextColor={'#95959588'}
-          style={[styles.input, { flex: 1, marginBottom: 0 }]}
-          value={query}
-          onChangeText={setQuery}
-          autoCorrect={false}
-          autoCapitalize="none"
-          multiline={false}
-          clearButtonMode="while-editing"
-        />
-        <TouchableOpacity onPress={() => setShowFilter(true)} style={[styles.iconBtn, styles.ml8]}>
-          <Ionicons name="options-outline" size={22} color="#6B7280" />
-        </TouchableOpacity>
-      </View>
-
-      <TouchableOpacity onPress={() => setShowCreate((s) => !s)} style={styles.btnLink}>
-        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufügen</Text>
+            <TouchableOpacity onPress={() => setShowCreate((s) => !s)} style={styles.btnLink}>
+        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufuegen</Text>
       </TouchableOpacity>
 
-      <Modal visible={showFilter} transparent animationType="fade" onRequestClose={() => setShowFilter(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setShowFilter(false)} />
-        <View style={styles.modalCenterWrap}>
-          <View style={styles.modalCard}>
-            <View style={{ padding: 12 }}>
-              <Text style={styles.h2}>Filtern, Sortieren, Gruppieren</Text>
-              <View style={styles.row}>
-                <View style={[styles.col, styles.mr8]}>
-                  <Text style={styles.label}>Sortieren nach</Text>
-                  <SimpleDropdown
-                    data={[
-                      { id: "created", name: "Hinzugefügt am" },
-                      { id: "datetime", name: "Datum & Uhrzeit" },
-                      { id: "priority", name: "Priorität" },
-                    ]}
-                    selectedId={sortBy}
-                    onChange={(id) => setSortBy(id as any)}
-                    placeholder="Sortieren nach"
-                  />
-                </View>
-                <View style={styles.col}>
-                  <Text style={styles.label}>Richtung</Text>
-                  <View style={{ flexDirection: "column", gap: 5 }}>
-                    <TouchableOpacity onPress={() => setSortDir("asc")} style={[styles.chip, styles.mr6, sortDir === "asc" && styles.chipActive]}>
-                      <Text style={styles.chipText}>Aufsteigend</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setSortDir("desc")} style={[styles.chip, sortDir === "desc" && styles.chipActive]}>
-                      <Text style={styles.chipText}>Absteigend</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-              <View style={{ marginTop: 12 }}>
-                <Text style={styles.label}>Gruppieren nach</Text>
-                <SimpleDropdown
-                  data={[
-                    { id: "none", name: "Keine" },
-                    { id: "created", name: "Hinzugefügt am" },
-                    { id: "datetime", name: "Datum & Uhrzeit" },
-                    { id: "priority", name: "Priorität" },
-                  ]}
-                  selectedId={groupBy}
-                  onChange={(id) => setGroupBy(id as any)}
-                  placeholder="Gruppieren nach"
-                />
-              </View>
-              <View style={[styles.row, { marginTop: 8 }]}>
-                <TouchableOpacity onPress={() => setShowFilter(false)} style={[styles.btnLink, styles.mr8]}>
-                  <Text style={styles.btnLinkText}>Übernehmen</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => { setGroupBy("none"); setSortBy("created"); setSortDir("desc"); }} style={styles.btnLink}>
-                  <Text style={styles.btnLinkTextMuted}>Zurücksetzen</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      
 
 <Modal visible={!!editingId} transparent animationType="fade" onRequestClose={() => cancelEdit()}>
   <Pressable style={styles.modalOverlay} onPress={cancelEdit} />
@@ -963,58 +1054,28 @@ export default function Tasklist() {
       </Modal>
 
       <FlatList
-        data={processTasks(currentList?.tasks ?? [], query)}
+        data={processedTasks}
         keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
         ListEmptyComponent={() => <Text style={styles.muted}>Keine Aufgaben in dieser Liste.</Text>}
         contentContainerStyle={{ paddingBottom: 24 }}
         renderItem={renderProcessedItem}
       />
 
-      {!!(currentList?.archived?.length ?? 0) && (
-        <>
-          <Text style={styles.h2}>Archiviert</Text>
-          <FlatList
-            data={processTasks(currentList?.archived ?? [], query)}
-            keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
-            contentContainerStyle={{ paddingBottom: 40 }}
-            renderItem={({ item }) => {
-              if ((item as any)._type === 'header') {
-                const h = item as any;
-                return <Text style={[styles.h2, { marginTop: 12 }]}>{h.label}</Text>;
-              }
-              const t = item as any as Task;
-              const topLine = buildTopLine(t.startAt, t.endAt);
-              return (
-                <View style={[styles.taskCard, styles.archivedCard]}>
-                  {!!topLine && (
-                    <View style={styles.metaRow}>
-                      <Text style={styles.metaStrong}>{topLine.trim()}</Text>
-                      {t.priority && (
-                        <Image source={getPriorityFlag(t.priority)} style={styles.flagIcon} />
-                      )}
-                    </View>
-                  )}
-                  <View style={styles.taskRow}>
-                    <View style={[styles.checkbox, styles.mr8, styles.checkboxDone]}>
-                      <Text style={styles.checkboxText}>✓</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.taskTitle, styles.through]}>{t.title}</Text>
-                      {!!t.description && (
-                        <Text style={[styles.taskDesc, styles.through]} numberOfLines={2}>
-                          {t.description}
-                        </Text>
-                      )}
-                      <TouchableOpacity onPress={() => restoreFromArchive(t.id)} style={[styles.btnLink, { paddingLeft: 0 }]}>
-                        <Text style={styles.btnLinkText}>Wiederherstellen</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              );
-            }}
-          />
-        </>
+      {statusFilter !== 'done' && !!(currentList?.archived?.length ?? 0) && (
+        <View style={{ marginTop: 16 }}>
+          <TouchableOpacity onPress={() => setShowArchived((v) => !v)} style={[styles.row, { alignItems: 'center', justifyContent: 'space-between' }]}>
+            <Text style={[styles.h2, { bottom: 40 }]}>Archiviert</Text>
+            <Ionicons name={showArchived ? 'chevron-up' : 'chevron-down'} size={18} color="#E5F4EF" />
+          </TouchableOpacity>
+          {showArchived && (
+            <FlatList
+              data={processedArchived}
+              keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              renderItem={renderArchivedItem}
+            />
+          )}
+        </View>
       )}
     </View>
   );
@@ -1022,7 +1083,9 @@ export default function Tasklist() {
 
 // --- Styles ---
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: Platform.select({ ios: 12, android: 8 }), paddingHorizontal: 12, backgroundColor: '#112a37' },
+  container: { flex: 1, paddingTop: Platform.select({ ios: 28, android: 20, default: 16 }), paddingHorizontal: 12, backgroundColor: '#112a37' },
+  headerRow: { marginTop: 10, alignItems: 'center' },
+  statusRow: { marginTop: 12, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   flagIcon: { width: 14, height: 14, marginLeft: 6 },
 
@@ -1063,7 +1126,7 @@ const styles = StyleSheet.create({
   mr8: { marginRight: 8 },
   ml8: { marginLeft: 8 },
 
-  h1: { fontSize: 22, fontWeight: '700', marginVertical: 20, bottom: -10, color: '#FFFFFF' },
+  h1: { fontSize: 22, fontWeight: '700', marginVertical: 12, color: '#FFFFFF' },
   h2: { fontSize: 18, fontWeight: '600', marginTop: 8, marginBottom: 6, color: '#E5F4EF' },
 
   row: { flexDirection: 'row' },
@@ -1075,32 +1138,38 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(7, 15, 23, 0.7)',
+  },
+  dropdownCenterWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
   },
   dropdownPanel: {
-    position: 'absolute',
-    top: 200,
-    left: 16,
-    right: 16,
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0F2530',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    maxHeight: 300,
+    borderColor: '#2A3E48',
+    maxHeight: 320,
     overflow: 'visible',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 6,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
   },
   dropdownItem: {
     paddingVertical: 12,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: '#1F3642',
   },
-  dropdownClose: { padding: 10, alignItems: 'center' },
+  dropdownItemText: { color: '#E5F4EF' },
+  dropdownClose: { padding: 10, alignItems: 'center', borderTopWidth: 1, borderTopColor: '#1F3642' },
+  dropdownCloseText: { color: '#C7D2D6' },
 
   // Modal panel for iOS picker
   pickerPanel: {
@@ -1136,10 +1205,10 @@ const styles = StyleSheet.create({
   label: { fontSize: 12, color: '#9CA3AF', marginBottom: 4 },
 
   btnLink: { paddingVertical: 8, paddingHorizontal: 4, alignSelf: 'flex-start' },
-  btnLinkTextAddTask: { color: '#9AD0C1', fontWeight: '700', bottom: -10 },
+  btnLinkTextAddTask: { color: '#9AD0C1', fontWeight: '700' },
   btnLinkText: { color: '#9AD0C1', fontWeight: '700' },
-  btnLinkTextAdd: { color: '#9AD0C1', fontWeight: '700', top: -10 },
-  btnLinkTextCancel: { color: '#C7D2D6', fontWeight: '600', top: -10 },
+  btnLinkTextAdd: { color: '#9AD0C1', fontWeight: '700' },
+  btnLinkTextCancel: { color: '#C7D2D6', fontWeight: '600' },
   btnLinkTextMuted: { color: '#C7D2D6', fontWeight: '600' },
 
   muted: { color: '#9CA3AF', marginVertical: 6, bottom: -20 },
@@ -1148,18 +1217,18 @@ const styles = StyleSheet.create({
 
   taskCard: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#2A3E48',
     borderRadius: 12,
-    padding: 10,
-    marginBottom: 10,
-    bottom: -20,
+    padding: 12,
+    marginBottom: 12,
+    backgroundColor: '#0F2530',
   },
-  archivedCard: { backgroundColor: '#F3F4F6' },
+  archivedCard: { backgroundColor: '#0C1F29', borderColor: '#2A3E48' },
 
   taskRow: { flexDirection: 'row' },
 
   taskTitle: { fontSize: 16, fontWeight: '700', color: '#ffffffff' },
-  taskDesc: { fontSize: 13, color: '#374151', marginTop: 2 },
+  taskDesc: { fontSize: 13, color: '#C7D2D6', marginTop: 2 },
 
   meta: { fontSize: 12, color: '#6B7280', marginTop: 4 },
   metaStrong: { fontSize: 12, color: '#ffffffff', marginBottom: 6, fontWeight: '600' },
@@ -1185,4 +1254,17 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: '#CBD5E1' },
   chipActive: { backgroundColor: '#D1FAE5', borderColor: '#10B981' },
   chipText: { fontSize: 12, fontWeight: '600' },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A3E48',
+    marginRight: 8,
+    marginBottom: 8,
+    backgroundColor: '#0F2530',
+  },
+  filterChipActive: { backgroundColor: '#6D28D9', borderColor: '#A78BFA' },
+  filterChipText: { color: '#C7D2D6', fontWeight: '700' },
+  filterChipTextActive: { color: '#FFFFFF' },
 });
