@@ -12,6 +12,7 @@ const anon = (extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUP
 // CHANGE: treat any non-empty url as valid (do not compare against DEFAULT_URL)
 const isPlaceholderProject = !url;
 const usingFallback = !url || !anon || isPlaceholderProject;
+export const supabaseUsingFallback = usingFallback;
 
 if (usingFallback) {
   // Avoid throwing at import time -- provide a minimal fallback client so the app can render.
@@ -33,15 +34,25 @@ try {
 }
 
 function buildFallback() {
-  const chain = () => ({
-    select: async () => ({ data: [], error: null }),
-    insert: async () => ({ data: null, error: null }),
-    eq: () => chain(),
-    in: () => chain(),
-    order: () => chain(),
-    is: () => chain(),
-    single: async () => ({ data: null, error: null }),
-  });
+  const chain = () => {
+    const makePromise = <T>(data: T) => {
+      const p = Promise.resolve({ data, error: null } as any);
+      return Object.assign(p, {
+        select: async () => ({ data, error: null } as any),
+      });
+    };
+    return {
+      select: async () => ({ data: [], error: null } as any),
+      insert: async () => ({ data: null, error: null } as any),
+      upsert: (_payload: any) => makePromise(null),
+      delete: () => chain(),
+      eq: () => chain(),
+      in: () => chain(),
+      order: () => chain(),
+      is: () => chain(),
+      single: async () => ({ data: null, error: null } as any),
+    };
+  };
   return {
     auth: {
       async getSession() { return { data: { session: null }, error: null } as any; },

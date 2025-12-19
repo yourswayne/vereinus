@@ -1,4 +1,4 @@
-﻿import { View, Text, StyleSheet, Button, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView } from 'react-native';
+﻿import { View, Text, StyleSheet, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { TextStyle } from 'react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -7,7 +7,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUsingFallback } from '../lib/supabase';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -58,6 +58,26 @@ type Exercise = {
     description?: RichTextStyle;
   };
   createdAt: string;
+};
+type Assignment = {
+  id: string;
+  orgId: string | null;
+  groupId: string | null;
+  title: string;
+  description?: string;
+  attachmentUrl?: string;
+  dueAt?: string;
+  createdAt: string;
+  createdBy?: string | null;
+};
+type AssignmentSubmission = {
+  id: string;
+  assignmentId: string;
+  userId: string;
+  userName?: string | null;
+  note?: string;
+  attachmentUrl?: string;
+  submittedAt: string;
 };
 
 export default function Home() {
@@ -146,13 +166,25 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([]);
   const [orgMembersLoading, setOrgMembersLoading] = useState(false);
   const [orgMemberGroups, setOrgMemberGroups] = useState<{ id: string; name: string }[]>([]);
+  // --- Aufgaben ---
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [assignmentSubmissions, setAssignmentSubmissions] = useState<AssignmentSubmission[]>([]);
+  const [assignmentView, setAssignmentView] = useState<'list' | 'detail' | 'create' | 'submissions' | 'submissionDetail'>('list');
+  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [selectedSubmission, setSelectedSubmission] = useState<AssignmentSubmission | null>(null);
+  const [assignmentTitle, setAssignmentTitle] = useState('');
+  const [assignmentDescription, setAssignmentDescription] = useState('');
+  const [assignmentAttachment, setAssignmentAttachment] = useState('');
+  const [assignmentGroupId, setAssignmentGroupId] = useState<string | null>(null);
+  const [submissionNote, setSubmissionNote] = useState('');
+  const [submissionAttachment, setSubmissionAttachment] = useState('');
   const groupsReqRef = useRef(0);
 
-  const currentOrg = useMemo(() => orgs.find(o => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
+  const currentOrg = useMemo(() => orgs.find((o) => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
   const roleLabel = useMemo(() => {
     if (orgRole === 'director') return 'Direktor';
     if (orgRole === 'teacher') return 'Lehrer';
-    if (orgRole === 'student') return 'Schüler';
+    if (orgRole === 'student') return 'Schueler';
     return null;
   }, [orgRole]);
   const canCreateAnnouncement = useMemo(() => {
@@ -163,7 +195,45 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     () => `${EXERCISE_STORAGE_BASE}:${selectedOrgId ?? 'default'}`,
     [selectedOrgId],
   );
+  const assignmentStorageKey = useMemo(
+    () => `@vereinus/assignments:${selectedOrgId ?? 'default'}`,
+    [selectedOrgId],
+  );
+  const submissionStorageKey = useMemo(
+    () => `@vereinus/assignment_submissions:${selectedOrgId ?? 'default'}`,
+    [selectedOrgId],
+  );
+  const myMemberEntry = useMemo(
+    () => orgMembers.find((m) => m.userId === sessionUserId) ?? null,
+    [orgMembers, sessionUserId],
+  );
+  const myGroupIds = useMemo(() => {
+    const ids = new Set<string>();
+    (myMemberEntry?.groupIds ?? []).forEach((id) => ids.add(id));
+    groups.forEach((g) => ids.add(g.id));
+    return Array.from(ids);
+  }, [myMemberEntry, groups]);
+  const assignmentGroupsForTeacher = useMemo(() => {
+    if (orgRole === 'director') return groups.filter((g) => g.org_id === selectedOrgId);
+    if (orgRole === 'teacher') {
+      const byMembership = groups.filter((g) => myGroupIds.includes(g.id));
+      if (byMembership.length) return byMembership;
+      // Fallback: wenn Gruppenmitgliedschaften (orgMembers) noch nicht geladen wurden, nimm alle Gruppen des Vereins
+      return groups.filter((g) => g.org_id === selectedOrgId);
+    }
+    return [];
+  }, [groups, selectedOrgId, orgRole, myGroupIds]);
+  const [assignmentDueDate, setAssignmentDueDate] = useState<Date | null>(null);
+  const [showDueDatePicker, setShowDueDatePicker] = useState(false);
+  const [showDueTimePicker, setShowDueTimePicker] = useState(false);
+  const [assignmentStatusFilter, setAssignmentStatusFilter] = useState<'all' | 'upcoming' | 'overdue' | 'submitted'>('all');
+  const assignmentSyncErrorShown = useRef(false);
   const uid = () => Math.random().toString(36).slice(2, 10);
+  const uuidv4 = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 
   useEffect(() => {
     let alive = true;
@@ -254,6 +324,40 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     AsyncStorage.setItem(exerciseStorageKey, JSON.stringify(exercises)).catch(() => {});
   }, [exercises, exerciseStorageKey]);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [rawAssignments, rawSubs] = await Promise.all([
+          AsyncStorage.getItem(assignmentStorageKey),
+          AsyncStorage.getItem(submissionStorageKey),
+        ]);
+        if (!alive) return;
+        setAssignments(rawAssignments ? JSON.parse(rawAssignments) : []);
+        setAssignmentSubmissions(rawSubs ? JSON.parse(rawSubs) : []);
+      } catch {
+        if (alive) {
+          setAssignments([]);
+          setAssignmentSubmissions([]);
+        }
+      }
+    })();
+    return () => { alive = false; };
+  }, [assignmentStorageKey, submissionStorageKey]);
+
+  useEffect(() => {
+    AsyncStorage.setItem(assignmentStorageKey, JSON.stringify(assignments)).catch(() => {});
+  }, [assignments, assignmentStorageKey]);
+  useEffect(() => {
+    AsyncStorage.setItem(submissionStorageKey, JSON.stringify(assignmentSubmissions)).catch(() => {});
+  }, [assignmentSubmissions, submissionStorageKey]);
+
+  useEffect(() => {
+    if (assignmentGroupId && !assignmentGroupsForTeacher.some((g) => g.id === assignmentGroupId)) {
+      setAssignmentGroupId(assignmentGroupsForTeacher[0]?.id ?? null);
+    }
+  }, [assignmentGroupId, assignmentGroupsForTeacher]);
+
   const buildTextStyle = (style?: RichTextStyle): TextStyle => {
     const decorations: string[] = [];
     if (style?.underline) decorations.push('underline');
@@ -310,7 +414,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufügen.');
+        Alert.alert('Berechtigung benoetigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufuegen.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -349,7 +453,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
   const handleAttachmentButton = () => {
     setShowMediaModal(true);
-    // Direkt Galerie öffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
+    // Direkt Galerie oeffnen, damit sofort etwas passiert; Modal bleibt fuer Links/Dateien offen.
     pickFromLibrary().catch(() => {});
   };
 
@@ -476,7 +580,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Löschen fehlgeschlagen.');
+      Alert.alert('Fehler', e?.message ?? 'Loeschen fehlgeschlagen.');
       return false;
     }
   };
@@ -500,7 +604,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       if (grpDelErr) throw grpDelErr;
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht gelöscht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht geloescht werden.');
       return false;
     }
   };
@@ -860,10 +964,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         event_payload: payload,
       });
       if (error) throw error;
-      Alert.alert('Kalender', 'Termin wurde für alle in den Kalender eingetragen.');
+      Alert.alert('Kalender', 'Termin wurde fuer alle in den Kalender eingetragen.');
       setCalendarSyncedAnnouncements((prev) => ({ ...prev, [announcement.id]: true }));
     } catch (e: any) {
-      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht übertragen werden.');
+      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht uebertragen werden.');
     } finally {
       setCalendarQueueBusy(false);
     }
@@ -912,7 +1016,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         setAnnouncementModalVisible(false);
       }
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht gelöscht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht geloescht werden.');
     }
   };
 
@@ -934,7 +1038,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       ]);
       if (!alive) return;
       if (annRes.error) {
-        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungen konnten nicht geladen werden.');
+        Alert.alert('Fehler', annRes.error.message ?? 'Ankuendigungen konnten nicht geladen werden.');
         setAnnRemote([]);
       } else {
         setAnnRemote((annRes.data ?? []) as any[]);
@@ -1042,7 +1146,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
   const [calendarQueueBusy, setCalendarQueueBusy] = useState(false);
   const [announcementCalendarBroadcast, setAnnouncementCalendarBroadcast] = useState(false);
 
-  // Hardware-Back für Android
+  // Hardware-Back fuer Android
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (screen !== 'home') {
@@ -1061,6 +1165,273 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     });
   }, [navigation]);
 
+  const visibleAssignments = useMemo(() => {
+    return assignments
+      .filter((a) => {
+        if (selectedOrgId && a.orgId && a.orgId !== selectedOrgId) return false;
+        if (orgRole === 'student') return !!(a.groupId && myGroupIds.includes(a.groupId));
+        if (orgRole === 'teacher') return !!(a.groupId && myGroupIds.includes(a.groupId));
+        if (orgRole === 'director') return selectedOrgId ? a.orgId === selectedOrgId : true;
+        return false;
+      })
+      .filter((a) => {
+        const now = new Date();
+        const submission = assignmentSubmissions.find((s) => s.assignmentId === a.id && s.userId === sessionUserId);
+        const due = a.dueAt ? new Date(a.dueAt) : null;
+        if (assignmentStatusFilter === 'submitted') return !!submission;
+        if (assignmentStatusFilter === 'overdue') return !submission && !!due && due.getTime() < now.getTime();
+        if (assignmentStatusFilter === 'upcoming') return !submission && (!due || due.getTime() >= now.getTime());
+        return true;
+      })
+      .sort((a, b) => {
+        const da = a.dueAt ? new Date(a.dueAt).getTime() : 0;
+        const db = b.dueAt ? new Date(b.dueAt).getTime() : 0;
+        return da - db;
+      });
+  }, [assignments, assignmentSubmissions, assignmentStatusFilter, selectedOrgId, orgRole, myGroupIds, sessionUserId]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    if (!assignments.length && !assignmentSubmissions.length) return;
+    const sync = async () => {
+      try {
+        if (assignments.length) {
+          const payload = assignments.map((a) => ({
+            id: a.id,
+            org_id: a.orgId,
+            group_id: a.groupId,
+            title: a.title,
+            description: a.description ?? null,
+            attachment_url: a.attachmentUrl ?? null,
+            due_at: a.dueAt ?? null,
+            created_by: a.createdBy ?? null,
+            created_at: a.createdAt ?? new Date().toISOString(),
+          }));
+          await (supabase.from('assignments' as any) as any).upsert(payload, { onConflict: 'id' } as any);
+        }
+        if (assignmentSubmissions.length) {
+          const payloadSubs = assignmentSubmissions.map((s) => ({
+            id: s.id,
+            assignment_id: s.assignmentId,
+            user_id: s.userId,
+            user_name: s.userName ?? null,
+            note: s.note ?? null,
+            attachment_url: s.attachmentUrl ?? null,
+            submitted_at: s.submittedAt,
+          }));
+          await (supabase.from('assignment_submissions' as any) as any).upsert(payloadSubs, { onConflict: 'id' } as any);
+        }
+      } catch (e: any) {
+        if (!assignmentSyncErrorShown.current) {
+          assignmentSyncErrorShown.current = true;
+          Alert.alert('Supabase Sync', e?.message ?? 'Aufgaben konnten nicht synchronisiert werden.');
+        }
+      }
+    };
+    sync();
+  }, [assignments, assignmentSubmissions, selectedOrgId]);
+
+  const groupNameFor = (id: string | null) => groups.find((g) => g.id === id)?.name ?? 'Ohne Gruppe';
+  const formatAssignmentDue = (iso?: string) => {
+    if (!iso) return 'Keine Deadline';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const resetAssignmentForm = () => {
+    setAssignmentTitle('');
+    setAssignmentDescription('');
+    setAssignmentAttachment('');
+    setAssignmentDueDate(null);
+    setAssignmentGroupId((prev) => prev ?? assignmentGroupsForTeacher[0]?.id ?? null);
+  };
+
+  useEffect(() => {
+    if (supabaseUsingFallback) {
+      Alert.alert('Supabase offline', 'Supabase Konfiguration fehlt. Aufgaben werden nur lokal gespeichert.');
+    }
+  }, []);
+
+  const goBackToAssignmentList = () => {
+    setAssignmentView('list');
+    setSelectedAssignment(null);
+    setSelectedSubmission(null);
+    setSubmissionNote('');
+    setSubmissionAttachment('');
+  };
+
+  const submissionMap = useMemo(() => {
+    const map = new Map<string, AssignmentSubmission>();
+    assignmentSubmissions.forEach((s) => {
+      if (s.userId === sessionUserId) map.set(s.assignmentId, s);
+    });
+    return map;
+  }, [assignmentSubmissions, sessionUserId]);
+
+  const removeSubmission = async (assignmentId: string, submissionId?: string | null) => {
+    setAssignmentSubmissions((prev) => prev.filter((s) => !(s.assignmentId === assignmentId && (!submissionId || s.id === submissionId))));
+    if (supabase && typeof supabase.from === 'function') {
+      try {
+        let builder: any = supabase.from('assignment_submissions' as any).delete().eq('assignment_id', assignmentId);
+        if (submissionId) builder = builder.eq('id', submissionId);
+        await builder;
+      } catch {
+        // ignore remote delete errors
+      }
+    }
+  };
+
+  useEffect(() => {
+    setAssignmentView('list');
+    setSelectedAssignment(null);
+    setSelectedSubmission(null);
+    setSubmissionNote('');
+    setSubmissionAttachment('');
+  }, [assignmentStorageKey]);
+
+  const openAssignmentDetail = (assignment: Assignment) => {
+    setSelectedAssignment(assignment);
+    const mySubmission = submissionMap.get(assignment.id);
+    setSubmissionNote(mySubmission?.note ?? '');
+    setSubmissionAttachment(mySubmission?.attachmentUrl ?? '');
+    setAssignmentView(orgRole === 'student' ? 'detail' : 'submissions');
+  };
+
+  const assignmentSubsForSelected = useMemo(() => {
+    if (!selectedAssignment) return [];
+    return assignmentSubmissions.filter((s) => s.assignmentId === selectedAssignment.id);
+  }, [assignmentSubmissions, selectedAssignment]);
+
+  const outstandingMembers = useMemo(() => {
+    if (!selectedAssignment || !selectedAssignment.groupId) return [];
+    const gid = selectedAssignment.groupId;
+    const members = orgMembers.filter((m) => m.groupIds.includes(gid));
+    return members.filter((m) => !assignmentSubsForSelected.some((s) => s.userId === m.userId));
+  }, [assignmentSubsForSelected, orgMembers, selectedAssignment]);
+
+  const submitAssignment = () => {
+    if (!selectedAssignment) return;
+    if (!sessionUserId) {
+      Alert.alert('Login erforderlich', 'Bitte melde dich an, um die Aufgabe abzugeben.');
+      return;
+    }
+    const note = submissionNote.trim();
+    const attachment = submissionAttachment.trim();
+    const payload: AssignmentSubmission = {
+      id: uuidv4(),
+      assignmentId: selectedAssignment.id,
+      userId: sessionUserId,
+      userName: myMemberEntry?.displayName ?? null,
+      note: note || undefined,
+      attachmentUrl: attachment || undefined,
+      submittedAt: new Date().toISOString(),
+    };
+    setAssignmentSubmissions((prev) => {
+      const existingIdx = prev.findIndex((s) => s.assignmentId === selectedAssignment.id && s.userId === sessionUserId);
+      if (existingIdx >= 0) {
+        const copy = [...prev];
+        copy[existingIdx] = { ...payload, id: prev[existingIdx].id };
+        return copy;
+      }
+      return [payload, ...prev];
+    });
+    Alert.alert('Abgegeben', 'Deine Abgabe wurde gespeichert.');
+  };
+
+  const deleteAssignment = async (assignmentId: string) => {
+    setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+    setAssignmentSubmissions((prev) => prev.filter((s) => s.assignmentId !== assignmentId));
+    setSelectedAssignment(null);
+    setSelectedSubmission(null);
+    if (supabase && typeof supabase.from === 'function') {
+      try {
+        await (supabase.from('assignment_submissions' as any) as any).delete().eq('assignment_id', assignmentId);
+        await (supabase.from('assignments' as any) as any).delete().eq('id', assignmentId);
+      } catch {
+        // ignore remote delete errors
+      }
+    }
+    setAssignmentView('list');
+  };
+
+  const openSubmissionDetail = (sub: AssignmentSubmission) => {
+    setSelectedSubmission(sub);
+    setAssignmentView('submissionDetail');
+  };
+
+  const onDueDateChange = (_event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS !== 'ios') setShowDueDatePicker(false);
+    if (!date) return;
+    setAssignmentDueDate((prev) => {
+      const next = new Date(date);
+      if (prev) next.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+      return next;
+    });
+  };
+
+  const onDueTimeChange = (_event: DateTimePickerEvent, date?: Date) => {
+    if (Platform.OS !== 'ios') setShowDueTimePicker(false);
+    if (!date) return;
+    setAssignmentDueDate((prev) => {
+      const base = prev ? new Date(prev) : new Date();
+      base.setHours(date.getHours(), date.getMinutes(), 0, 0);
+      if (!prev) {
+        base.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+      }
+      return base;
+    });
+  };
+
+  const saveAssignment = async () => {
+    const title = assignmentTitle.trim();
+    const desc = assignmentDescription.trim();
+    const attachment = assignmentAttachment.trim();
+    const groupId = assignmentGroupId ?? assignmentGroupsForTeacher[0]?.id ?? null;
+    if (!title) {
+      Alert.alert('Titel fehlt', 'Bitte gib einen Titel ein.');
+      return;
+    }
+    if (!groupId) {
+      Alert.alert('Keine Gruppe', 'Bitte waehle eine Gruppe fuer die Aufgabe.');
+      return;
+    }
+    const dueIso = assignmentDueDate ? assignmentDueDate.toISOString() : undefined;
+    const newAssignment: Assignment = {
+      id: uuidv4(),
+      orgId: selectedOrgId,
+      groupId,
+      title,
+      description: desc || undefined,
+      attachmentUrl: attachment || undefined,
+      dueAt: dueIso || undefined,
+      createdAt: new Date().toISOString(),
+      createdBy: sessionUserId ?? null,
+    };
+    setAssignments((prev) => [newAssignment, ...prev]);
+    if (supabase && typeof supabase.from === 'function') {
+      try {
+        await (supabase.from('assignments' as any) as any).upsert(
+          {
+            id: newAssignment.id,
+            org_id: newAssignment.orgId,
+            group_id: newAssignment.groupId,
+            title: newAssignment.title,
+            description: newAssignment.description ?? null,
+            attachment_url: newAssignment.attachmentUrl ?? null,
+            due_at: newAssignment.dueAt ?? null,
+            created_by: newAssignment.createdBy ?? null,
+            created_at: newAssignment.createdAt,
+          },
+          { onConflict: 'id' } as any,
+        );
+      } catch {
+        // ignore remote save error to stay offline-safe
+      }
+    }
+    goBackToAssignmentList();
+  };
+
 
   if (screen === 'ankuendigung') {
     return (
@@ -1071,7 +1442,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             <Ionicons name="chevron-back" size={22} color="#194055" />
             
           </TouchableOpacity>
-          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankündigungen</Text>
+          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankuendigungen</Text>
           <View style={{ width: 60 }} />
 
             {!!groups.length && (
@@ -1108,7 +1479,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               )}
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
+          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankuendigungen vorhanden.'}</Text>}
         />
 
 
@@ -1116,7 +1487,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
         {canCreateAnnouncement && (
           <TouchableOpacity style={[styles.button, styles.annButton]} onPress={() => openAnnouncementModal('create')}>
-            <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
+            <Text style={styles.buttonText}>+ Neue Ankuendigung</Text>
           </TouchableOpacity>
         )}
 
@@ -1126,7 +1497,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={[styles.modalCard, styles.orgModalCard, styles.announcementModalCard]}>
               <View style={{ padding: 12 }}>
-                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankündigung bearbeiten' : 'Neue Ankündigung'}</Text>
+                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankuendigung bearbeiten' : 'Neue Ankuendigung'}</Text>
                 <TextInput style={styles.input} placeholder="Titel" placeholderTextColor={'#95959588'} value={announcementTitle} onChangeText={setAnnouncementTitle} />
                 <TextInput
                   style={[styles.input, styles.textarea]}
@@ -1195,7 +1566,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={styles.modalCard}>
               <View style={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>Ankündigung</Text>
+                <Text style={styles.sectionTitle}>Ankuendigung</Text>
                 {!!announcementActionTarget && (
                   <Text style={styles.modalSubtitle}>{announcementActionTarget.title}</Text>
                 )}
@@ -1225,8 +1596,8 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 >
                   <Text style={styles.actionButtonText}>
                     {announcementActionTarget && calendarSyncedAnnouncements[announcementActionTarget.id]
-                      ? 'Im Kalender für alle austragen'
-                      : 'Im Kalender für alle eintragen'}
+                      ? 'Im Kalender fuer alle austragen'
+                      : 'Im Kalender fuer alle eintragen'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1234,10 +1605,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   onPress={() => {
                     if (!announcementActionTarget) return;
                     const target = announcementActionTarget;
-                    Alert.alert('Ankündigung löschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
+                    Alert.alert('Ankuendigung loeschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
                       { text: 'Abbrechen', style: 'cancel' },
                       {
-                        text: 'Löeschen',
+                        text: 'Loeeschen',
                         style: 'destructive',
                         onPress: async () => {
                           setAnnouncementActionTarget(null);
@@ -1247,7 +1618,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     ]);
                   }}
                 >
-                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Loeschen</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.btnLink} onPress={() => setAnnouncementActionTarget(null)}>
                   <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -1274,7 +1645,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanäle</Text>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanaele</Text>
             <View style={{ width: 60 }} />
           </View>
           <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
@@ -1376,13 +1747,13 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       if (!groupActionTarget) return;
                       const target = groupActionTarget;
                       setGroupActionTarget(null);
-                      Alert.alert('Gruppe löschen', `Soll die Gruppe "${target.name}" wirklich gelöscht werden?`, [
+                      Alert.alert('Gruppe loeschen', `Soll die Gruppe "${target.name}" wirklich geloescht werden?`, [
                         { text: 'Abbrechen', style: 'cancel' },
-                        { text: 'Löschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
+                        { text: 'Loeschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
                       ]);
                     }}
                   >
-                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe löschen</Text>
+                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe loeschen</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.btnLink} onPress={() => setGroupActionTarget(null)}>
                     <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -1447,7 +1818,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             keyExtractor={(m) => m.id}
             renderItem={renderItem}
           />
-          {/* Kanal-Hinweis entfernt: für Director wird automatisch ein Standardkanal erstellt */}
+          {/* Kanal-Hinweis entfernt: fuer Director wird automatisch ein Standardkanal erstellt */}
           <View style={[styles.inputRow, { marginBottom: bottomGap}]}> 
             <TextInput
               style={[styles.input, { flex: 1, marginBottom: 0, height: chatInputHeight, maxHeight: MAX_CHAT_INPUT_HEIGHT }]}
@@ -1489,7 +1860,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     );
   }
 
-    if (screen === 'uebungen') {
+  if (screen === 'uebungen') {
     const canAddExercises = orgRole === 'director';
     const renderExerciseCard = ({ item }: { item: Exercise }) => (
       <TouchableOpacity
@@ -1565,7 +1936,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
               <View style={[styles.modalCard, styles.orgModalCard]}>
               <ScrollView contentContainerStyle={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>{editingExerciseId ? 'Übung bearbeiten' : 'Übung anlegen'}</Text>
+                <Text style={styles.sectionTitle}>{editingExerciseId ? 'uebung bearbeiten' : 'uebung anlegen'}</Text>
                 <Text style={styles.label}>Titel</Text>
                 <View style={styles.formatBar}>
                   {renderStyleToggle('title', 'bold', 'B')}
@@ -1594,7 +1965,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   onChangeText={setExerciseDescription}
                 />
                 <TouchableOpacity onPress={handleAttachmentButton} style={styles.attachmentButton}>
-                  <Text style={styles.attachmentButtonText}>+ Bilder & Videos hinzufuegen</Text>
+                  <Text style={styles.attachmentButtonText}>+ Bilder & Videos hinzufügen</Text>
                 </TouchableOpacity>
                 {!!attachments.length && (
                   <View style={{ marginTop: 6 }}>
@@ -1618,12 +1989,12 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={[styles.modalCard, styles.orgModalCard]}>
               <View style={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>Medien hinzufuegen</Text>
+                <Text style={styles.sectionTitle}>Medien hinzufügen</Text>
                 <TouchableOpacity onPress={pickFromLibrary} style={[styles.attachmentButton, { marginTop: 8 }]}>
-                  <Text style={styles.attachmentButtonText}>Aus Galerie auswaehlen</Text>
+                  <Text style={styles.attachmentButtonText}>Aus Galerie auswählen</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={pickDocument} style={[styles.attachmentButton, { marginTop: 8 }]}>
-                  <Text style={styles.attachmentButtonText}>Aus Dateien waehlen</Text>
+                  <Text style={styles.attachmentButtonText}>Aus Dateien wählen</Text>
                 </TouchableOpacity>
                 <Text style={[styles.label, styles.mediaHint]}>Oder per Link:</Text>
                 <View style={styles.mediaTypeRow}>
@@ -1681,7 +2052,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
         <Modal visible={!!selectedExercise} transparent animationType="fade" onRequestClose={() => setSelectedExercise(null)}>
           <Pressable style={styles.modalOverlay} onPress={() => setSelectedExercise(null)} />
-          <View style={styles.modalCenterWrap}>
+          <View style={[styles.modalCenterWrap, { paddingHorizontal: 8 }]}>
             <View style={[styles.modalCard, styles.orgModalCard]}>
               <ScrollView contentContainerStyle={{ padding: 12 }}>
                 <Text style={[styles.exerciseDetailTitle, buildTextStyle(selectedExercise?.textStyles?.title)]}>{selectedExercise?.title}</Text>
@@ -1718,7 +2089,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                           />
                           <View style={styles.videoOverlay}>
                             <Ionicons name="expand" size={22} color="#E5F4EF" />
-                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild öffnen</Text>
+                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild oeffnen</Text>
                           </View>
                         </TouchableOpacity>
                       </View>
@@ -1752,10 +2123,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     <TouchableOpacity
                       onPress={() => {
                         if (!selectedExercise) return;
-                        Alert.alert('Übung löschen?', 'Diese Übung wird entfernt.', [
+                        Alert.alert('uebung loeschen?', 'Diese uebung wird entfernt.', [
                           { text: 'Abbrechen', style: 'cancel' },
                           {
-                            text: 'Löschen',
+                            text: 'Loeschen',
                             style: 'destructive',
                             onPress: () => deleteExercise(selectedExercise.id),
                           },
@@ -1763,7 +2134,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       }}
                       style={[styles.actionButton, styles.actionButtonDanger, { flex: 1 }]}
                     >
-                      <Text style={styles.actionButtonDangerText}>Löschen</Text>
+                      <Text style={styles.actionButtonDangerText}>Loeschen</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -1775,14 +2146,366 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     );
   }
   if (screen === 'aufgaben') {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Aufgaben</Text>
-      <Text style={styles.text}>Hier kommen To-Dos, Checklisten oder Aufgabenlisten hin.</Text>
-      <Button title="Zurueck" onPress={() => setScreen('home')} />
-    </View>
-  );
-}
+    const isStudent = orgRole === 'student';
+    const isTeacher = orgRole === 'teacher';
+    const isDirector = orgRole === 'director';
+    const canCreateAssignments = isTeacher || isDirector;
+
+    if (assignmentView === 'create') {
+      return (
+        <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
+          <View style={styles.assignmentHeader}>
+            <TouchableOpacity onPress={goBackToAssignmentList} style={styles.headerBack}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0 }]}>Aufgabe erstellen</Text>
+            <View style={{ width: 32 }} />
+          </View>
+
+          <ScrollView
+            style={{ width: '100%', flex: 1 }}
+            contentContainerStyle={{ paddingBottom: 24, width: '100%', flexGrow: 1 }}
+            showsVerticalScrollIndicator={false}
+            horizontal={false}
+          >
+            <Text style={styles.label}>Titel</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Titel der Aufgabe"
+              placeholderTextColor={'#95959588'}
+              value={assignmentTitle}
+              onChangeText={setAssignmentTitle}
+            />
+
+            <Text style={[styles.label, { marginTop: 10 }]}>Beschreibung</Text>
+            <TextInput
+              style={[styles.input, styles.textarea]}
+              placeholder="Beschreibung (optional)"
+              placeholderTextColor={'#95959588'}
+              value={assignmentDescription}
+              onChangeText={setAssignmentDescription}
+              multiline
+            />
+
+            <Text style={[styles.label, { marginTop: 10 }]}>Datei-Link</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Link zur Datei (optional)"
+              placeholderTextColor={'#95959588'}
+              value={assignmentAttachment}
+              onChangeText={setAssignmentAttachment}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={[styles.label, { marginTop: 10 }]}>Faellig bis</Text>
+            <View style={{ flexDirection: 'row' }}>
+              <TouchableOpacity
+                style={[styles.datePickerButton, showDueDatePicker && styles.datePickerButtonActive, { flex: 1, marginRight: 8 }]}
+                onPress={() => setShowDueDatePicker((v) => !v)}
+              >
+                <Text style={assignmentDueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
+                  {assignmentDueDate
+                    ? `${pad(assignmentDueDate.getDate())}.${pad(assignmentDueDate.getMonth() + 1)}.${assignmentDueDate.getFullYear()}`
+                    : 'Datum waehlen'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.datePickerButton, showDueTimePicker && styles.datePickerButtonActive, { flex: 1 }]}
+                onPress={() => setShowDueTimePicker((v) => !v)}
+              >
+                <Text style={assignmentDueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
+                  {assignmentDueDate ? `${pad(assignmentDueDate.getHours())}:${pad(assignmentDueDate.getMinutes())}` : 'Zeit waehlen'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {showDueDatePicker && (
+              <DateTimePicker
+                mode="date"
+                value={assignmentDueDate ?? new Date()}
+                onChange={onDueDateChange}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              />
+            )}
+            {showDueTimePicker && (
+              <DateTimePicker
+                mode="time"
+                value={assignmentDueDate ?? new Date()}
+                onChange={onDueTimeChange}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              />
+            )}
+
+            <Text style={[styles.label, { marginTop: 10 }]}>Gruppe</Text>
+            <View style={styles.groupChipRow}>
+              {assignmentGroupsForTeacher.map((g) => (
+                <TouchableOpacity
+                  key={g.id}
+                  onPress={() => setAssignmentGroupId(g.id)}
+                  style={[styles.groupChip, assignmentGroupId === g.id && styles.groupChipActive]}
+                >
+                  <Text style={[styles.groupChipText, assignmentGroupId === g.id && styles.groupChipTextActive]}>
+                    {g.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              {!assignmentGroupsForTeacher.length && (
+                <Text style={styles.muted}>Keine Gruppe verfuegbar.</Text>
+              )}
+            </View>
+
+            <View style={{ flexDirection: 'row', marginTop: 16 }}>
+              <TouchableOpacity onPress={saveAssignment} style={[styles.actionButton, styles.actionButtonPrimary, { marginRight: 8 }]}>
+                <Text style={styles.actionButtonText}>Speichern</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={goBackToAssignmentList} style={styles.actionButton}>
+                <Text style={styles.actionButtonText}>Abbrechen</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    if (assignmentView === 'detail' && selectedAssignment) {
+      const mine = submissionMap.get(selectedAssignment.id);
+      return (
+        <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
+          <View style={styles.assignmentHeader}>
+            <TouchableOpacity onPress={goBackToAssignmentList} style={styles.headerBack}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0 }]}>Aufgabe</Text>
+            <View style={{ width: 32 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+            <Text style={styles.assignmentTitle}>{selectedAssignment.title}</Text>
+            {!!selectedAssignment.description && (
+              <Text style={styles.assignmentBody}>{selectedAssignment.description}</Text>
+            )}
+            <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
+            <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
+            {!!selectedAssignment.attachmentUrl && (
+              <TouchableOpacity
+                onPress={() => Linking.openURL(selectedAssignment.attachmentUrl ?? '').catch(() => {})}
+                style={styles.attachmentButton}
+              >
+                <Text style={styles.attachmentButtonText}>Aufgabe-Datei öffnen</Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={{ marginTop: 20 }}>
+              <Text style={styles.label}>Meine Notiz</Text>
+              <TextInput
+                style={[styles.input, styles.textarea]}
+                placeholder="Kommentar oder Antwort"
+                placeholderTextColor={'#95959588'}
+                value={submissionNote}
+                onChangeText={setSubmissionNote}
+                multiline
+              />
+              <Text style={[styles.label, { marginTop: 10 }]}>Meine Datei (Link)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Link zu deiner Abgabe"
+                placeholderTextColor={'#95959588'}
+                value={submissionAttachment}
+                onChangeText={setSubmissionAttachment}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {mine && (
+                <Text style={styles.assignmentMeta}>
+                  Bereits abgegeben: {formatAssignmentDue(mine.submittedAt)}
+                </Text>
+              )}
+              <TouchableOpacity
+                onPress={() => {
+                  if (mine) {
+                    removeSubmission(selectedAssignment.id, mine.id);
+                  } else {
+                    submitAssignment();
+                  }
+                }}
+                style={[
+                  styles.actionButton,
+                  styles.actionButtonPrimary,
+                  { marginTop: 12 },
+                  mine && { backgroundColor: '#7F1D1D', borderColor: '#7F1D1D' },
+                ]}
+              >
+                <Text style={styles.actionButtonText}>{mine ? 'Abgabe rueckgaengig machen' : 'Abgeben'}</Text>
+              </TouchableOpacity>
+              {(isTeacher || isDirector) && (
+                <TouchableOpacity
+                  onPress={() => {
+                    Alert.alert('Aufgabe loeschen', 'Diese Aufgabe und Abgaben entfernen?', [
+                      { text: 'Abbrechen', style: 'cancel' },
+                      { text: 'Loeschen', style: 'destructive', onPress: () => selectedAssignment && deleteAssignment(selectedAssignment.id) },
+                    ]);
+                  }}
+                  style={[styles.actionButton, styles.actionButtonDanger, { marginTop: 8 }]}
+                >
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Aufgabe loeschen</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    if (assignmentView === 'submissions' && selectedAssignment) {
+      return (
+        <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
+          <View style={styles.assignmentHeader}>
+            <TouchableOpacity onPress={goBackToAssignmentList} style={styles.headerBack}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0 }]}>Abgaben</Text>
+            <View style={{ width: 32 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+            <Text style={styles.assignmentTitle}>{selectedAssignment.title}</Text>
+            <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
+            <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
+
+            <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Eingereicht</Text>
+            {assignmentSubsForSelected.length === 0 && (
+              <Text style={styles.muted}>Noch keine Abgaben.</Text>
+            )}
+            {assignmentSubsForSelected.map((sub) => (
+              <TouchableOpacity key={sub.id} onPress={() => openSubmissionDetail(sub)} style={styles.submissionCard}>
+                <Text style={styles.assignmentMetaStrong}>{sub.userName ?? sub.userId}</Text>
+                <Text style={styles.assignmentMeta}>Eingereicht: {formatAssignmentDue(sub.submittedAt)}</Text>
+                {!!sub.note && <Text style={styles.assignmentBody} numberOfLines={2}>{sub.note}</Text>}
+              </TouchableOpacity>
+            ))}
+
+            <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Ausstehend</Text>
+            {outstandingMembers.length === 0 && (
+              <Text style={styles.muted}>Niemand offen.</Text>
+            )}
+            {outstandingMembers.map((m) => (
+              <View key={m.userId} style={styles.submissionCard}>
+                <Text style={styles.assignmentMetaStrong}>{m.displayName}</Text>
+                <Text style={styles.assignmentMeta}>{m.email ?? m.userId}</Text>
+                <Text style={styles.assignmentMeta}>Keine Abgabe</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    if (assignmentView === 'submissionDetail' && selectedSubmission && selectedAssignment) {
+      return (
+        <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
+          <View style={styles.assignmentHeader}>
+            <TouchableOpacity onPress={() => setAssignmentView('submissions')} style={styles.headerBack}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0 }]}>Abgabe</Text>
+            <View style={{ width: 32 }} />
+          </View>
+          <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
+            <Text style={styles.assignmentTitle}>{selectedSubmission.userName ?? selectedSubmission.userId}</Text>
+            <Text style={styles.assignmentMeta}>Fuer: {selectedAssignment.title}</Text>
+            <Text style={styles.assignmentMeta}>Eingereicht: {formatAssignmentDue(selectedSubmission.submittedAt)}</Text>
+            {!!selectedSubmission.note && (
+              <Text style={[styles.assignmentBody, { marginTop: 10 }]}>{selectedSubmission.note}</Text>
+            )}
+            {!!selectedSubmission.attachmentUrl && (
+              <TouchableOpacity
+                onPress={() => Linking.openURL(selectedSubmission.attachmentUrl ?? '').catch(() => {})}
+                style={[styles.attachmentButton, { marginTop: 12 }]}
+              >
+                <Text style={styles.attachmentButtonText}>Abgabe-Datei oeffnen</Text>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    return (
+      <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
+        <View style={styles.assignmentHeader}>
+          <TouchableOpacity onPress={() => setScreen('home')} style={styles.headerBack}>
+            <Ionicons name="chevron-back" size={22} color="#194055" />
+          </TouchableOpacity>
+          <Text style={[styles.title, { marginBottom: 0 }]}>Aufgaben</Text>
+          <View style={{ width: 32 }} />
+        </View>
+        {canCreateAssignments && (
+          <TouchableOpacity
+            onPress={() => { resetAssignmentForm(); setAssignmentView('create'); }}
+            style={[styles.addExerciseButton, { alignSelf: 'flex-start', marginBottom: 8 }]}
+          >
+            <Text style={styles.addExerciseText}>+ Aufgabe</Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={[styles.row, styles.statusRow]}>
+          {[
+            { key: 'all', label: 'Alle' },
+            { key: 'upcoming', label: 'Bevorstehend' },
+            { key: 'overdue', label: 'Ueberfaellig' },
+            { key: 'submitted', label: 'Abgegeben' },
+          ].map((s) => (
+            <TouchableOpacity
+              key={s.key}
+              onPress={() => setAssignmentStatusFilter(s.key as any)}
+              style={[styles.filterChip, assignmentStatusFilter === s.key && styles.filterChipActive]}
+            >
+              <Text style={[styles.filterChipText, assignmentStatusFilter === s.key && styles.filterChipTextActive]}>{s.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <FlatList
+          data={visibleAssignments}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          ListEmptyComponent={<Text style={styles.exerciseEmpty}>Keine Aufgaben.</Text>}
+          renderItem={({ item }) => {
+            const sub = submissionMap.get(item.id);
+            return (
+              <TouchableOpacity
+                onPress={() => openAssignmentDetail(item)}
+                onLongPress={() => {
+                  if (!(isTeacher || isDirector)) return;
+                  Alert.alert('Aufgabe', 'Aktion auswaehlen', [
+                    { text: 'Abbrechen', style: 'cancel' },
+                    {
+                      text: 'Loeschen',
+                      style: 'destructive',
+                      onPress: () => deleteAssignment(item.id),
+                    },
+                  ]);
+                }}
+                delayLongPress={250}
+                style={styles.assignmentCard}
+                activeOpacity={0.9}
+              >
+                <Text style={styles.assignmentTitle}>{item.title}</Text>
+                {!!item.description && <Text style={styles.assignmentBody} numberOfLines={2}>{item.description}</Text>}
+                <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(item.groupId)}</Text>
+                <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(item.dueAt)}</Text>
+                {isStudent && (
+                  <Text style={[styles.assignmentMetaStrong, { marginTop: 6 }]}>
+                    {sub ? `Abgegeben: ${formatAssignmentDue(sub.submittedAt)}` : 'Noch nicht abgegeben'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
 // --- Home-Screen mit Buttons ---
   return (
     <SafeAreaView style={[styles.container, containerPaddings]}>
@@ -1802,10 +2525,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           </View>
         )}
       </View>
-      {/* Login-Button entfernt: Auth flow steht jetzt über /login */}
+      {/* Login-Button entfernt: Auth flow steht jetzt ueber /login */}
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
-  <Text style={styles.menuBtnText}>Ankündigungen</Text>
+  <Text style={styles.menuBtnText}>Ankuendigungen</Text>
 </TouchableOpacity>
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('chat')}>
@@ -1851,10 +2574,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                         }}
                         onLongPress={() => {
                           if (!isDirector || selectedOrgId !== item.id) return;
-                          Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [
+                          Alert.alert('Verein loeschen?', 'Dieser Verein wird dauerhaft geloescht.', [
                             { text: 'Abbrechen', style: 'cancel' },
                             {
-                              text: 'Löschen',
+                              text: 'Loeschen',
                               style: 'destructive',
                               onPress: async () => {
                                 const ok = await deleteOrganisationCascade(item.id);
@@ -1930,10 +2653,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => {
                   if (!orgActionTarget) return;
                   const target = orgActionTarget;
-                  Alert.alert('Verein löschen?', `Soll "${target.name}" dauerhaft gelöscht werden?`, [
+                  Alert.alert('Verein loeschen?', `Soll "${target.name}" dauerhaft geloescht werden?`, [
                     { text: 'Abbrechen', style: 'cancel' },
                     {
-                      text: 'Löschen',
+                      text: 'Loeschen',
                       style: 'destructive',
                       onPress: async () => {
                         setOrgActionTarget(null);
@@ -1944,7 +2667,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   ]);
                 }}
               >
-                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
+                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Loeschen</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnLink} onPress={() => setOrgActionTarget(null)}>
                 <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -2042,7 +2765,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 </View>
                 <Text style={styles.modalSubtitle}>{manageMembersOrg?.name ?? ''}</Text>
                 {(!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') && (
-                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren möglich.</Text>
+                  <Text style={styles.memberHint}>Bearbeitung nur fuer Direktoren moeglich.</Text>
                 )}
                 {orgMembersLoading ? (
                   <Text style={styles.text}>Lade Mitglieder...</Text>
@@ -2061,7 +2784,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       )}
                     </View>
                     <View style={styles.memberSection}>
-                      <Text style={styles.memberSectionTitle}>Schüler</Text>
+                      <Text style={styles.memberSectionTitle}>Schueler</Text>
                       {orgMembers.filter((m) => m.role === 'student').length ? (
                         orgMembers
                           .filter((m) => m.role === 'student')
@@ -2069,7 +2792,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                             renderMemberCard(member, !!(manageMembersOrg && orgRoles[manageMembersOrg.id] === 'director')),
                           )
                       ) : (
-                        <Text style={styles.memberEmptyText}>Keine Schüler vorhanden.</Text>
+                        <Text style={styles.memberEmptyText}>Keine Schueler vorhanden.</Text>
                       )}
                     </View>
                   </ScrollView>
@@ -2144,22 +2867,42 @@ const styles = StyleSheet.create({
   videoOverlay: { position: 'absolute', bottom: 8, right: 8, left: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingVertical: 6, paddingHorizontal: 10 },
   mediaHint: { marginTop: 10, color: '#E5F4EF', fontWeight: '600' },
   detailActionsRow: { flexDirection: 'row', marginTop: 12 },
+  assignmentHeader: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  assignmentCard: { width: '100%', alignSelf: 'stretch', padding: 16, borderRadius: 14, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 16, marginHorizontal: 0 },
+  assignmentTitle: { color: '#E5F4EF', fontSize: 18, fontWeight: '700', marginBottom: 4 },
+  assignmentBody: { color: '#C7D2D6', fontSize: 14, marginBottom: 6 },
+  assignmentMeta: { color: '#9CA3AF', fontSize: 13, marginTop: 2 },
+  assignmentMetaStrong: { color: '#E5F4EF', fontWeight: '700', fontSize: 14 },
+  submissionCard: { width: '100%', alignSelf: 'stretch', padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 12 },
+  groupChipRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
+  groupChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', marginRight: 8, marginBottom: 8, backgroundColor: '#0F2530' },
+  groupChipActive: { backgroundColor: '#194055', borderColor: '#3D8B77' },
+  groupChipText: { color: '#E5F4EF', fontWeight: '600' },
+  groupChipTextActive: { color: '#9FE1C7' },
+  muted: { color: '#6B7280', fontStyle: 'italic' },
+  statusRow: { marginTop: 8, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16, borderWidth: 1, borderColor: '#2A3E48', marginRight: 10, marginBottom: 10, backgroundColor: '#0F2530', alignSelf: 'flex-start' },
+  filterChipActive: { backgroundColor: '#194055', borderColor: '#3D8B77' },
+  filterChipText: { color: '#C7D2D6', fontWeight: '700' },
+  filterChipTextActive: { color: '#FFFFFF' },
+
+
 
   label: { color: '#ffffffff', fontSize: 14, fontWeight: '600', marginBottom: 6 },
 
   button: {
     backgroundColor: '#194055',   // Hintergrundfarbe
-    paddingVertical: 14,          // Höhe innen
+    paddingVertical: 14,          // Hoehe innen
     paddingHorizontal: 24,        // Breite innen
     borderRadius: 12,             // Runde Ecken
     marginVertical: 8,            // Abstand zwischen Buttons
     width: '80%',                 // Breite relativ zum Container
     alignItems: 'center',         // Text zentrieren
-    shadowColor: '#000',          // Schatten für iOS
+    shadowColor: '#000',          // Schatten fuer iOS
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.5,
-    elevation: 4,                 // Schatten für Android
+    elevation: 4,                 // Schatten fuer Android
   },
   centerButton: { alignSelf: 'center' },
 
@@ -2177,12 +2920,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     top: 2,
   },
-  // Speziell für "Zurück"-Button
+  // Speziell fuer "Zurueck"-Button
   backButton: {
     backgroundColor: '#A93226',   // Rote Variante
   },
 
-  // Text im Zurück-Button
+  // Text im Zurueck-Button
   backButtonText: {
     color: '#fff',
     fontSize: 16,
@@ -2211,6 +2954,7 @@ const styles = StyleSheet.create({
   calendarToggleCheckboxActive: { backgroundColor: '#3D8B77', borderColor: '#3D8B77' },
   calendarToggleLabel: { color: '#E5F4EF', fontSize: 16, fontWeight: '600' },
   calendarToggleHint: { color: '#9CA3AF', fontSize: 13, marginTop: 2 },
+  row : { flexDirection: 'row', alignItems: 'center' },
   // Flat menu buttons with separators
   menuBtn: {
     width: '100%',
@@ -2228,8 +2972,8 @@ const styles = StyleSheet.create({
 
   // Modal helpers
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.2)' },
-  modalCenterWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  modalCard: { width: '90%', backgroundColor: '#194055', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: 520, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 6 },
+  modalCenterWrap: { flex: 1, justifyContent: 'center', alignItems: 'stretch', paddingHorizontal: 0 },
+  modalCard: { width: '100%', maxWidth: '100%', backgroundColor: '#194055', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: '92%', shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 6, alignSelf: 'stretch' },
   orgModalCard: { backgroundColor: '#0f2533', borderColor: '#3D8B77' },
   announcementModalCard: { maxHeight: 660 },
   membersModalCard: { maxHeight: 640 },
@@ -2285,29 +3029,3 @@ const formatDateDE = (iso: string) => {
   if (isNaN(d.getTime())) return iso;
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
