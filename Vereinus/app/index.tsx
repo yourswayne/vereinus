@@ -524,7 +524,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
   const handleAttachmentButton = () => {
     setShowMediaModal(true);
-    // Direkt Galerie oeffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
+    // Direkt Galerie öffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
     pickFromLibrary().catch(() => {});
   };
 
@@ -675,7 +675,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       if (grpDelErr) throw grpDelErr;
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht geloescht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht gelöscht werden.');
       return false;
     }
   };
@@ -1012,12 +1012,12 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     const eventId = getAnnouncementCalendarEventId(announcement.id);
     const dateStr = announcement.event_date?.trim();
     if (!dateStr) {
-      Alert.alert('Kalender', 'Diese Ankündigung hat kein Datum. Bitte fuege zuerst ein Datum hinzu.');
+      Alert.alert('Kalender', 'Diese Ankündigung hat kein Datum. Bitte füge zuerst ein Datum hinzu.');
       return;
     }
     const start = new Date(dateStr);
     if (Number.isNaN(start.getTime())) {
-      Alert.alert('Kalender', 'Das eingetragene Datum ist ungueltig.');
+      Alert.alert('Kalender', 'Das eingetragene Datum ist ungültig.');
       return;
     }
     if (!dateStr.includes('T')) {
@@ -1126,7 +1126,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       ]);
       if (!alive) return;
       if (annRes.error) {
-        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungen konnten nicht geladen werden.');
+        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungungen konnten nicht geladen werden.');
         setAnnRemote([]);
       } else {
         setAnnRemote((annRes.data ?? []) as any[]);
@@ -2869,7 +2869,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 </View>
                 <Text style={styles.modalSubtitle}>{manageMembersOrg?.name ?? ''}</Text>
                 {(!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') && (
-                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren möglich.</Text>
+                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren moeglich.</Text>
                 )}
                 {orgMembersLoading ? (
                   <Text style={styles.text}>Lade Mitglieder...</Text>
@@ -3002,7 +3002,7 @@ const styles = StyleSheet.create({
     marginVertical: 8,            // Abstand zwischen Buttons
     width: '80%',                 // Breite relativ zum Container
     alignItems: 'center',         // Text zentrieren
-    shadowColor: '#000',          // Schatten fürr iOS
+    shadowColor: '#000',          // Schatten für iOS
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.5,

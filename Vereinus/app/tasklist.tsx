@@ -319,7 +319,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('start')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -880,12 +880,12 @@ export default function Tasklist() {
             data={lists}
             selectedId={selectedListId}
             onChange={(val) => setSelectedListId(val)}
-            placeholder="Liste waehlen"
+            placeholder="Liste wählen"
             style={{ color: '#FFFFFF' }}
           />
         </View>
         <TouchableOpacity onPress={deleteCurrentList} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>Liste loeschen</Text>
+          <Text style={styles.iconBtnText}>Liste löschen</Text>
         </TouchableOpacity>
       </View>
 
