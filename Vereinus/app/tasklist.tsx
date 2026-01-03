@@ -14,6 +14,7 @@ import {
   useColorScheme,
   ScrollView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -136,7 +137,7 @@ function SimpleDropdown<T extends { id: string; name: string }>(
     data,
     selectedId,
     onChange,
-    placeholder = 'Liste waehlen',
+    placeholder = 'Liste wählen',
     style,
   }: {
     data: T[];
@@ -187,12 +188,12 @@ function SimpleDropdown<T extends { id: string; name: string }>(
                   }}
                   style={styles.dropdownItem}
                 >
-                  <Text numberOfLines={1} style={styles.dropdownItemText}>+ Liste hinzufuegen...</Text>
+                  <Text numberOfLines={1} style={styles.dropdownItemText}>+ Liste hinzufügen...</Text>
                 </TouchableOpacity>
               )}
             />
             <TouchableOpacity onPress={() => setOpen(false)} style={styles.dropdownClose}>
-              <Text style={styles.dropdownCloseText}>Schliessen</Text>
+              <Text style={styles.dropdownCloseText}>Schließen</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -275,7 +276,7 @@ const DateRangeInputs = ({
     setPicker(null);
   };
 
-  // iOS: direkte kompakte Picker ohne zusaetzliche Inputs
+  // iOS: direkte kompakte Picker ohne zusätzliche Inputs
   if (Platform.OS === 'ios') {
     const startDate = parseDateTime(startAt) ?? new Date();
     const endDate = parseDateTime(endAt) ?? new Date();
@@ -318,7 +319,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('start')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -340,7 +341,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('end')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -380,10 +381,10 @@ const DateRangeInputs = ({
     );
   }
 
-  const startDateLabel = startAt?.split(' ')[0] ?? 'Datum waehlen';
-  const startTimeLabel = startAt?.split(' ')[1] ?? 'Uhrzeit hinzufuegen (optional)';
-  const endDateLabel = endAt?.split(' ')[0] ?? 'Datum waehlen';
-  const endTimeLabel = endAt?.split(' ')[1] ?? 'Uhrzeit hinzufuegen (optional)';
+  const startDateLabel = startAt?.split(' ')[0] ?? 'Datum wählen';
+  const startTimeLabel = startAt?.split(' ')[1] ?? 'Uhrzeit hinzufügen (optional)';
+  const endDateLabel = endAt?.split(' ')[0] ?? 'Datum wählen';
+  const endTimeLabel = endAt?.split(' ')[1] ?? 'Uhrzeit hinzufügen (optional)';
 
   return (
     <View>
@@ -436,12 +437,12 @@ const DateRangeInputs = ({
         <View style={styles.row}>
           {!!startAt && (
             <TouchableOpacity onPress={() => clearDate('start')} style={[styles.btnLink, styles.mr8]}>
-              <Text style={styles.btnLinkTextMuted}>Von loeschen</Text>
+              <Text style={styles.btnLinkTextMuted}>Von löschen</Text>
             </TouchableOpacity>
           )}
           {!!endAt && (
             <TouchableOpacity onPress={() => clearDate('end')} style={styles.btnLink}>
-              <Text style={styles.btnLinkTextMuted}>Bis loeschen</Text>
+              <Text style={styles.btnLinkTextMuted}>Bis löschen</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -453,6 +454,7 @@ const DateRangeInputs = ({
 // --- Main ---
 export default function Tasklist() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [currentSessionUserId, setCurrentSessionUserId] = useState<string | null>(null);
   // Start without default lists so the create-list flow
   // can enforce first-time creation when empty
@@ -475,7 +477,6 @@ export default function Tasklist() {
   const [addListName, setAddListName] = useState('');
   type StatusFilter = 'all' | 'upcoming' | 'overdue' | 'done';
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [showArchived, setShowArchived] = useState(false);
 
   const currentList = useMemo(() => lists.find((l) => l.id === selectedListId), [lists, selectedListId]);
 
@@ -600,10 +601,10 @@ export default function Tasklist() {
 
   const deleteCurrentList = useCallback(() => {
     if (!currentList) return;
-    Alert.alert('Liste loeschen', `Soll die Liste "${currentList.name}" wirklich geloescht werden?`, [
+    Alert.alert('Liste löschen', `Soll die Liste "${currentList.name}" wirklich gelöscht werden?`, [
       { text: 'Abbrechen', style: 'cancel' },
       {
-        text: 'Loeschen',
+        text: 'Löschen',
         style: 'destructive',
         onPress: () => {
           setLists((prev) => {
@@ -766,30 +767,6 @@ export default function Tasklist() {
     return out;
   }, [visibleTasks]);
   const processedTasks = groupedEntries;
-  const processedArchived = useMemo(() => {
-    const groups = new Map<string, { key: string; label: string; items: Task[] }>();
-    const archived = currentList?.archived ?? [];
-    for (const t of archived) {
-      const d = parseDateTime(t.startAt ?? t.endAt);
-      const key = d ? toDateString(d) : 'nodate';
-      const weekday = d ? d.toLocaleDateString('de-DE', { weekday: 'long' }) : '';
-      const label = d ? `${toDateStringDE(d)}   ${weekday}` : 'Ohne Datum';
-      if (!groups.has(key)) groups.set(key, { key, label, items: [] });
-      groups.get(key)!.items.push(t);
-    }
-    const sorted = Array.from(groups.values()).sort((a, b) => {
-      if (a.key === 'nodate') return 1;
-      if (b.key === 'nodate') return -1;
-      return a.key.localeCompare(b.key);
-    });
-    const out: ListEntry[] = [];
-    sorted.forEach((g) => {
-      out.push({ _type: 'header', key: g.key, label: g.label });
-      out.push(...g.items);
-    });
-    return out;
-  }, [currentList]);
-
   // --- Render ---
   const getPriorityFlag = useCallback((prio: Priority) => {
     try {
@@ -903,12 +880,12 @@ export default function Tasklist() {
             data={lists}
             selectedId={selectedListId}
             onChange={(val) => setSelectedListId(val)}
-            placeholder="Liste waehlen"
+            placeholder="Liste wählen"
             style={{ color: '#FFFFFF' }}
           />
         </View>
         <TouchableOpacity onPress={deleteCurrentList} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>Liste loeschen</Text>
+          <Text style={styles.iconBtnText}>Liste löschen</Text>
         </TouchableOpacity>
       </View>
 
@@ -916,7 +893,7 @@ export default function Tasklist() {
         {[
           { key: 'all', label: 'Alle' },
           { key: 'upcoming', label: 'Bevorstehend' },
-          { key: 'overdue', label: 'Ueberfaellig' },
+          { key: 'overdue', label: 'Überfällig' },
           { key: 'done', label: 'Erledigt' },
         ].map((s) => (
           <TouchableOpacity
@@ -970,7 +947,7 @@ export default function Tasklist() {
                   }}
                   style={[styles.btnLink, styles.mr8]}
                 >
-                  <Text style={styles.btnLinkTextAdd}>Hinzufuegen</Text>
+                  <Text style={styles.btnLinkTextAdd}>Hinzufügen</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
@@ -991,7 +968,7 @@ export default function Tasklist() {
       </Modal>
 
             <TouchableOpacity onPress={() => setShowCreate((s) => !s)} style={styles.btnLink}>
-        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufuegen</Text>
+        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufügen</Text>
       </TouchableOpacity>
 
       
@@ -1057,26 +1034,9 @@ export default function Tasklist() {
         data={processedTasks}
         keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
         ListEmptyComponent={() => <Text style={styles.muted}>Keine Aufgaben in dieser Liste.</Text>}
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 12) + 72 }}
         renderItem={renderProcessedItem}
       />
-
-      {statusFilter !== 'done' && !!(currentList?.archived?.length ?? 0) && (
-        <View style={{ marginTop: 16 }}>
-          <TouchableOpacity onPress={() => setShowArchived((v) => !v)} style={[styles.row, { alignItems: 'center', justifyContent: 'space-between' }]}>
-            <Text style={[styles.h2, { bottom: 40 }]}>Archiviert</Text>
-            <Ionicons name={showArchived ? 'chevron-up' : 'chevron-down'} size={18} color="#E5F4EF" />
-          </TouchableOpacity>
-          {showArchived && (
-            <FlatList
-              data={processedArchived}
-              keyExtractor={(item) => (item as any)._type === 'header' ? `h-${(item as any).key}` : (item as any).id}
-              contentContainerStyle={{ paddingBottom: 40 }}
-              renderItem={renderArchivedItem}
-            />
-          )}
-        </View>
-      )}
     </View>
   );
 }

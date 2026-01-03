@@ -55,7 +55,7 @@ const DAY_LABELS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 const MONTH_LABELS = [
   'Januar',
   'Februar',
-  'Maerz',
+  'März',
   'April',
   'Mai',
   'Juni',
@@ -391,15 +391,15 @@ export default function Calender() {
       return;
     }
     if (eventDraft.scope === 'org' && eventDraft.orgId && roleByOrg[eventDraft.orgId] !== 'director') {
-      Alert.alert('Keine Berechtigung', 'Nur Direktoren koennen Termine fuer den gesamten Verein veroeffentlichen.');
+      Alert.alert('Keine Berechtigung', 'Nur Direktoren können Termine für den gesamten Verein veröffentlichen.');
       return;
     }
     if (eventDraft.scope === 'org' && !eventDraft.orgId) {
-      Alert.alert('Verein fehlt', 'Bitte waehle einen Verein aus.');
+      Alert.alert('Verein fehlt', 'Bitte wähle einen Verein aus.');
       return;
     }
     if (eventDraft.scope === 'self' && !sessionUserId) {
-      Alert.alert('Login erforderlich', 'Bitte melde dich an, um persoenliche Termine zu speichern.');
+      Alert.alert('Login erforderlich', 'Bitte melde dich an, um persönliche Termine zu speichern.');
       return;
     }
     const eventId = editingEventId ?? `${Date.now()}`;
@@ -536,7 +536,7 @@ export default function Calender() {
   const deleteEvent = useCallback(async (evt: CalendarEvent) => {
     if (evt.scope === 'self') {
       if (!sessionUserId) {
-        Alert.alert('Login erforderlich', 'Bitte melde dich an, um Termine zu loeschen.');
+        Alert.alert('Login erforderlich', 'Bitte melde dich an, um Termine zu löschen.');
         return false;
       }
       const { error } = await supabase

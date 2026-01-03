@@ -86,7 +86,9 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const containerPaddings = { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 };
   // Chat messages (remote)
-  const [messages, setMessages] = useState<{ id: string; text: string; from: 'me' | 'other'; at: string }[]>([]);
+  const [messages, setMessages] = useState<{ id: string; text: string; from: 'me' | 'other'; at: string; userId: string | null }[]>([]);
+  const [messageUserNames, setMessageUserNames] = useState<Record<string, string>>({});
+  const messageUserNamesRef = useRef<Record<string, string>>({});
   const [draft, setDraft] = useState('');
   // Chat input auto-grow up to a limit, then scroll
   const MIN_CHAT_INPUT_HEIGHT = 56;
@@ -107,6 +109,10 @@ export default function Home() {
     });
     return () => { s.remove(); h.remove(); };
   }, []);
+
+  useEffect(() => {
+    messageUserNamesRef.current = messageUserNames;
+  }, [messageUserNames]);
 
   // --- Supabase session + Orgs/Groups + remote Announcements ---
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
@@ -234,6 +240,71 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+
+  const buildProfileDisplayName = (
+    profile?: {
+      first_name?: string | null;
+      last_name?: string | null;
+      display_name?: string | null;
+      full_name?: string | null;
+      username?: string | null;
+      email?: string | null;
+    },
+    fallbackId?: string,
+  ) => {
+    const first = profile?.first_name?.trim();
+    const last = profile?.last_name?.trim();
+    const full = [first, last].filter(Boolean).join(' ').trim();
+    if (full) return full;
+    const displayName = profile?.display_name?.trim();
+    if (displayName) return displayName;
+    const fullName = profile?.full_name?.trim();
+    if (fullName) return fullName;
+    const userName = profile?.username?.trim();
+    if (userName) return userName;
+    const email = profile?.email?.trim();
+    if (email) return email;
+    if (fallbackId) return `Mitglied ${fallbackId.slice(0, 6)}`;
+    return 'Mitglied';
+  };
+
+  const fetchProfilesByIds = async (userIds: string[]) => {
+    if (!userIds.length) return [] as any[];
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, display_name, username, first_name, last_name, email')
+        .in('id', userIds);
+      if (!error) return data ?? [];
+    } catch {
+      // fallback below
+    }
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, display_name')
+        .in('id', userIds);
+      if (!error) return data ?? [];
+    } catch {
+      // ignore missing profiles table
+    }
+    return [] as any[];
+  };
+
+  const ensureMessageUserNames = async (userIds: string[]) => {
+    const unique = Array.from(new Set(userIds.filter(Boolean)));
+    const missing = unique.filter((id) => !messageUserNamesRef.current[id]);
+    if (!missing.length) return;
+    const rows = await fetchProfilesByIds(missing);
+    if (!rows.length) return;
+    const next: Record<string, string> = {};
+    rows.forEach((p: any) => {
+      if (p?.id) next[p.id] = buildProfileDisplayName(p, p.id);
+    });
+    if (Object.keys(next).length) {
+      setMessageUserNames((prev) => ({ ...prev, ...next }));
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -414,7 +485,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Berechtigung benoetigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufuegen.');
+        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufügen.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -453,7 +524,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
   const handleAttachmentButton = () => {
     setShowMediaModal(true);
-    // Direkt Galerie oeffnen, damit sofort etwas passiert; Modal bleibt fuer Links/Dateien offen.
+    // Direkt Galerie öffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
     pickFromLibrary().catch(() => {});
   };
 
@@ -580,7 +651,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Loeschen fehlgeschlagen.');
+      Alert.alert('Fehler', e?.message ?? 'Löschen fehlgeschlagen.');
       return false;
     }
   };
@@ -604,7 +675,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       if (grpDelErr) throw grpDelErr;
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht geloescht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht gelöscht werden.');
       return false;
     }
   };
@@ -663,17 +734,34 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       if (memErr) throw memErr;
       const membersData = (memRows ?? []) as { user_id: string; role: 'director' | 'teacher' | 'student' }[];
       const userIds = membersData.map((m) => m.user_id);
-      let profileMap: Record<string, { full_name?: string | null; email?: string | null }> = {};
+      let profileMap: Record<string, { display_name?: string | null; full_name?: string | null; email?: string | null; username?: string | null; first_name?: string | null; last_name?: string | null }> = {};
       if (userIds.length) {
         try {
           const { data: profilesRows, error: profilesErr } = await supabase
             .from('profiles')
-            .select('id, full_name, email')
+            .select('id, display_name, username, first_name, last_name, email')
             .in('id', userIds);
           if (!profilesErr) {
             (profilesRows ?? []).forEach((p: any) => {
-              profileMap[p.id] = { full_name: p.full_name, email: p.email };
+              profileMap[p.id] = {
+                display_name: p.display_name,
+                full_name: p.full_name,
+                email: p.email,
+                username: p.username,
+                first_name: p.first_name,
+                last_name: p.last_name,
+              };
             });
+          } else {
+            const { data: fallbackRows, error: fallbackErr } = await supabase
+              .from('profiles')
+              .select('id, display_name')
+              .in('id', userIds);
+            if (!fallbackErr) {
+              (fallbackRows ?? []).forEach((p: any) => {
+                profileMap[p.id] = { display_name: p.display_name };
+              });
+            }
           }
         } catch {
           // ignore missing profiles table
@@ -695,7 +783,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       }
       const mapped: OrgMemberRow[] = membersData.map((member) => {
         const profile = profileMap[member.user_id];
-        const displayName = profile?.full_name || profile?.email || `Mitglied ${member.user_id.slice(0, 6)}`;
+        const displayName = buildProfileDisplayName(profile, member.user_id);
         const groupsForMember = groupMemberships
           .filter((gm) => gm.user_id === member.user_id)
           .map((gm) => gm.group_id);
@@ -907,7 +995,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       }
       closeAnnouncementModal();
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht gespeichert werden.');
+      Alert.alert('Fehler', e?.message ?? 'Ankündigung konnte nicht gespeichert werden.');
     }
   };
 
@@ -918,18 +1006,18 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
   const handleAnnouncementCalendarSync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte waehle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
     const dateStr = announcement.event_date?.trim();
     if (!dateStr) {
-      Alert.alert('Kalender', 'Diese Ankuendigung hat kein Datum. Bitte fuege zuerst ein Datum hinzu.');
+      Alert.alert('Kalender', 'Diese Ankündigung hat kein Datum. Bitte füge zuerst ein Datum hinzu.');
       return;
     }
     const start = new Date(dateStr);
     if (Number.isNaN(start.getTime())) {
-      Alert.alert('Kalender', 'Das eingetragene Datum ist ungueltig.');
+      Alert.alert('Kalender', 'Das eingetragene Datum ist ungültig.');
       return;
     }
     if (!dateStr.includes('T')) {
@@ -964,17 +1052,17 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         event_payload: payload,
       });
       if (error) throw error;
-      Alert.alert('Kalender', 'Termin wurde fuer alle in den Kalender eingetragen.');
+      Alert.alert('Kalender', 'Termin wurde für alle in den Kalender eingetragen.');
       setCalendarSyncedAnnouncements((prev) => ({ ...prev, [announcement.id]: true }));
     } catch (e: any) {
-      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht uebertragen werden.');
+      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht übertragen werden.');
     } finally {
       setCalendarQueueBusy(false);
     }
   };
   const handleAnnouncementCalendarUnsync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte waehle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
@@ -1016,7 +1104,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         setAnnouncementModalVisible(false);
       }
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht geloescht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Ankündigung konnte nicht gelöscht werden.');
     }
   };
 
@@ -1038,7 +1126,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       ]);
       if (!alive) return;
       if (annRes.error) {
-        Alert.alert('Fehler', annRes.error.message ?? 'Ankuendigungen konnten nicht geladen werden.');
+        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungungen konnten nicht geladen werden.');
         setAnnRemote([]);
       } else {
         setAnnRemote((annRes.data ?? []) as any[]);
@@ -1121,12 +1209,14 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         .eq('channel_id', chatChannelId)
         .order('created_at', { ascending: true }) as any);
       const rows = (data ?? []) as { id: string; user_id: string; body: string; created_at: string }[];
-      setMessages(rows.map(r => ({ id: r.id, text: r.body, from: r.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(r.created_at) })) as any);
+      setMessages(rows.map(r => ({ id: r.id, text: r.body, from: r.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(r.created_at), userId: r.user_id ?? null })) as any);
+      ensureMessageUserNames(rows.map((r) => r.user_id));
       // realtime
       const chan = (supabase as any).channel?.(`msg-${chatChannelId}`)
         ?.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${chatChannelId}` }, (payload: any) => {
           const r = payload.new as { id: string; user_id: string; body: string; created_at: string };
-          setMessages((prev: any) => (prev.some((m: any) => m.id === r.id) ? prev : [...prev, { id: r.id, text: r.body, from: r.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(r.created_at) }]));
+          setMessages((prev: any) => (prev.some((m: any) => m.id === r.id) ? prev : [...prev, { id: r.id, text: r.body, from: r.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(r.created_at), userId: r.user_id ?? null }]));
+          ensureMessageUserNames([r.user_id]);
         })
         ?.subscribe();
       unsub = () => chan?.unsubscribe?.();
@@ -1146,7 +1236,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
   const [calendarQueueBusy, setCalendarQueueBusy] = useState(false);
   const [announcementCalendarBroadcast, setAnnouncementCalendarBroadcast] = useState(false);
 
-  // Hardware-Back fuer Android
+  // Hardware-Back für Android
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (screen !== 'home') {
@@ -1393,7 +1483,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       return;
     }
     if (!groupId) {
-      Alert.alert('Keine Gruppe', 'Bitte waehle eine Gruppe fuer die Aufgabe.');
+      Alert.alert('Keine Gruppe', 'Bitte wähle eine Gruppe für die Aufgabe.');
       return;
     }
     const dueIso = assignmentDueDate ? assignmentDueDate.toISOString() : undefined;
@@ -1442,7 +1532,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             <Ionicons name="chevron-back" size={22} color="#194055" />
             
           </TouchableOpacity>
-          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankuendigungen</Text>
+          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankündigungen</Text>
           <View style={{ width: 60 }} />
 
             {!!groups.length && (
@@ -1479,7 +1569,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               )}
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankuendigungen vorhanden.'}</Text>}
+          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
         />
 
 
@@ -1487,7 +1577,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
         {canCreateAnnouncement && (
           <TouchableOpacity style={[styles.button, styles.annButton]} onPress={() => openAnnouncementModal('create')}>
-            <Text style={styles.buttonText}>+ Neue Ankuendigung</Text>
+            <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
           </TouchableOpacity>
         )}
 
@@ -1497,7 +1587,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={[styles.modalCard, styles.orgModalCard, styles.announcementModalCard]}>
               <View style={{ padding: 12 }}>
-                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankuendigung bearbeiten' : 'Neue Ankuendigung'}</Text>
+                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankündigung bearbeiten' : 'Neue Ankündigung'}</Text>
                 <TextInput style={styles.input} placeholder="Titel" placeholderTextColor={'#95959588'} value={announcementTitle} onChangeText={setAnnouncementTitle} />
                 <TextInput
                   style={[styles.input, styles.textarea]}
@@ -1515,7 +1605,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
                 >
                   <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswaehlen'}
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
                   </Text>
                 </TouchableOpacity>
                 {showAnnouncementDatePicker && Platform.OS === 'ios' && (
@@ -1542,8 +1632,8 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     {announcementCalendarBroadcast && <Ionicons name="checkmark" size={16} color="#0F2530" />}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.calendarToggleLabel}>Im Kalender fuer alle eintragen</Text>
-                    <Text style={styles.calendarToggleHint}>Legt nach dem Speichern automatisch einen Termin fuer deinen Verein an.</Text>
+                    <Text style={styles.calendarToggleLabel}>Im Kalender für alle eintragen</Text>
+                    <Text style={styles.calendarToggleHint}>Legt nach dem Speichern automatisch einen Termin für deinen Verein an.</Text>
                   </View>
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row' }}>
@@ -1566,7 +1656,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={styles.modalCard}>
               <View style={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>Ankuendigung</Text>
+                <Text style={styles.sectionTitle}>Ankündigung</Text>
                 {!!announcementActionTarget && (
                   <Text style={styles.modalSubtitle}>{announcementActionTarget.title}</Text>
                 )}
@@ -1596,8 +1686,8 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 >
                   <Text style={styles.actionButtonText}>
                     {announcementActionTarget && calendarSyncedAnnouncements[announcementActionTarget.id]
-                      ? 'Im Kalender fuer alle austragen'
-                      : 'Im Kalender fuer alle eintragen'}
+                      ? 'Im Kalender für alle austragen'
+                      : 'Im Kalender für alle eintragen'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1605,10 +1695,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   onPress={() => {
                     if (!announcementActionTarget) return;
                     const target = announcementActionTarget;
-                    Alert.alert('Ankuendigung loeschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
+                    Alert.alert('Ankündigung löschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
                       { text: 'Abbrechen', style: 'cancel' },
                       {
-                        text: 'Loeeschen',
+                        text: 'Löschen',
                         style: 'destructive',
                         onPress: async () => {
                           setAnnouncementActionTarget(null);
@@ -1618,7 +1708,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     ]);
                   }}
                 >
-                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Loeschen</Text>
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.btnLink} onPress={() => setAnnouncementActionTarget(null)}>
                   <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -1645,7 +1735,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanaele</Text>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanäle</Text>
             <View style={{ width: 60 }} />
           </View>
           <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
@@ -1747,13 +1837,13 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       if (!groupActionTarget) return;
                       const target = groupActionTarget;
                       setGroupActionTarget(null);
-                      Alert.alert('Gruppe loeschen', `Soll die Gruppe "${target.name}" wirklich geloescht werden?`, [
+                      Alert.alert('Gruppe löschen', `Soll die Gruppe "${target.name}" wirklich gelöscht werden?`, [
                         { text: 'Abbrechen', style: 'cancel' },
-                        { text: 'Loeschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
+                        { text: 'Löschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
                       ]);
                     }}
                   >
-                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe loeschen</Text>
+                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe löschen</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.btnLink} onPress={() => setGroupActionTarget(null)}>
                     <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -1790,14 +1880,27 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         </SafeAreaView>
       );
     }
-    const renderItem = ({ item }: { item: typeof messages[number] }) => (
-      <View style={[styles.bubbleRow, item.from === 'me' ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}>
-        <View style={[styles.bubble, item.from === 'me' ? styles.bubbleMe : styles.bubbleOther]}>
-          <Text style={[styles.bubbleText, item.from === 'me' && { color: '#fff' }]}>{item.text}</Text>
-          <Text style={styles.bubbleTime}>{item.at}</Text>
+    const renderItem = ({ item }: { item: typeof messages[number] }) => {
+      const userId = item.userId ?? '';
+      const displayName = (userId && messageUserNames[userId])
+        ? messageUserNames[userId]
+        : item.from === 'me'
+          ? 'Ich'
+          : userId
+            ? `Mitglied ${userId.slice(0, 6)}`
+            : 'Mitglied';
+      return (
+        <View style={[styles.bubbleRow, item.from === 'me' ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}>
+          <View style={{ width: '100%', alignItems: item.from === 'me' ? 'flex-end' : 'flex-start' }}>
+            <Text style={[styles.bubbleName, item.from === 'me' && styles.bubbleNameMe]}>{displayName}</Text>
+            <View style={[styles.bubble, item.from === 'me' ? styles.bubbleMe : styles.bubbleOther]}>
+              <Text style={[styles.bubbleText, item.from === 'me' && { color: '#fff' }]}>{item.text}</Text>
+              <Text style={styles.bubbleTime}>{item.at}</Text>
+            </View>
+          </View>
         </View>
-      </View>
-    );
+      );
+    };
 
     const bottomGap = keyboardVisible ? 8 : insets.bottom + TAB_BAR_HEIGHT + 8;
     return (
@@ -1818,7 +1921,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             keyExtractor={(m) => m.id}
             renderItem={renderItem}
           />
-          {/* Kanal-Hinweis entfernt: fuer Director wird automatisch ein Standardkanal erstellt */}
+          {/* Kanal-Hinweis entfernt: für Director wird automatisch ein Standardkanal erstellt */}
           <View style={[styles.inputRow, { marginBottom: bottomGap}]}> 
             <TextInput
               style={[styles.input, { flex: 1, marginBottom: 0, height: chatInputHeight, maxHeight: MAX_CHAT_INPUT_HEIGHT }]}
@@ -1846,7 +1949,8 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     .select('id,user_id,body,created_at')
                     .single();
                   if (!error && data) {
-                    setMessages((prev: any) => ([...prev, { id: data.id, text: data.body, from: data.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(data.created_at) }]));
+                    setMessages((prev: any) => ([...prev, { id: data.id, text: data.body, from: data.user_id === sessionUserId ? 'me' : 'other', at: timeFromIso(data.created_at), userId: data.user_id ?? null }]));
+                    ensureMessageUserNames([data.user_id]);
                     setDraft('');
                   }
                 })();
@@ -1936,7 +2040,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
               <View style={[styles.modalCard, styles.orgModalCard]}>
               <ScrollView contentContainerStyle={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>{editingExerciseId ? 'uebung bearbeiten' : 'uebung anlegen'}</Text>
+                <Text style={styles.sectionTitle}>{editingExerciseId ? 'Übung bearbeiten' : 'Übung anlegen'}</Text>
                 <Text style={styles.label}>Titel</Text>
                 <View style={styles.formatBar}>
                   {renderStyleToggle('title', 'bold', 'B')}
@@ -2089,7 +2193,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                           />
                           <View style={styles.videoOverlay}>
                             <Ionicons name="expand" size={22} color="#E5F4EF" />
-                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild oeffnen</Text>
+                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild öffnen</Text>
                           </View>
                         </TouchableOpacity>
                       </View>
@@ -2123,10 +2227,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     <TouchableOpacity
                       onPress={() => {
                         if (!selectedExercise) return;
-                        Alert.alert('uebung loeschen?', 'Diese uebung wird entfernt.', [
+                        Alert.alert('Übung löschen?', 'Diese Übung wird entfernt.', [
                           { text: 'Abbrechen', style: 'cancel' },
                           {
-                            text: 'Loeschen',
+                            text: 'Löschen',
                             style: 'destructive',
                             onPress: () => deleteExercise(selectedExercise.id),
                           },
@@ -2134,7 +2238,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       }}
                       style={[styles.actionButton, styles.actionButtonDanger, { flex: 1 }]}
                     >
-                      <Text style={styles.actionButtonDangerText}>Loeschen</Text>
+                      <Text style={styles.actionButtonDangerText}>Löschen</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -2198,7 +2302,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               autoCorrect={false}
             />
 
-            <Text style={[styles.label, { marginTop: 10 }]}>Faellig bis</Text>
+            <Text style={[styles.label, { marginTop: 10 }]}>Fällig bis</Text>
             <View style={{ flexDirection: 'row' }}>
               <TouchableOpacity
                 style={[styles.datePickerButton, showDueDatePicker && styles.datePickerButtonActive, { flex: 1, marginRight: 8 }]}
@@ -2207,7 +2311,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 <Text style={assignmentDueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
                   {assignmentDueDate
                     ? `${pad(assignmentDueDate.getDate())}.${pad(assignmentDueDate.getMonth() + 1)}.${assignmentDueDate.getFullYear()}`
-                    : 'Datum waehlen'}
+                    : 'Datum wählen'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -2215,7 +2319,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => setShowDueTimePicker((v) => !v)}
               >
                 <Text style={assignmentDueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                  {assignmentDueDate ? `${pad(assignmentDueDate.getHours())}:${pad(assignmentDueDate.getMinutes())}` : 'Zeit waehlen'}
+                  {assignmentDueDate ? `${pad(assignmentDueDate.getHours())}:${pad(assignmentDueDate.getMinutes())}` : 'Zeit wählen'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2285,7 +2389,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               <Text style={styles.assignmentBody}>{selectedAssignment.description}</Text>
             )}
             <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
-            <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
+            <Text style={styles.assignmentMeta}>Fällig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
             {!!selectedAssignment.attachmentUrl && (
               <TouchableOpacity
                 onPress={() => Linking.openURL(selectedAssignment.attachmentUrl ?? '').catch(() => {})}
@@ -2335,19 +2439,19 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   mine && { backgroundColor: '#7F1D1D', borderColor: '#7F1D1D' },
                 ]}
               >
-                <Text style={styles.actionButtonText}>{mine ? 'Abgabe rueckgaengig machen' : 'Abgeben'}</Text>
+                <Text style={styles.actionButtonText}>{mine ? 'Abgabe rückgängig machen' : 'Abgeben'}</Text>
               </TouchableOpacity>
               {(isTeacher || isDirector) && (
                 <TouchableOpacity
                   onPress={() => {
-                    Alert.alert('Aufgabe loeschen', 'Diese Aufgabe und Abgaben entfernen?', [
+                    Alert.alert('Aufgabe löschen', 'Diese Aufgabe und Abgaben entfernen?', [
                       { text: 'Abbrechen', style: 'cancel' },
-                      { text: 'Loeschen', style: 'destructive', onPress: () => selectedAssignment && deleteAssignment(selectedAssignment.id) },
+                      { text: 'Löschen', style: 'destructive', onPress: () => selectedAssignment && deleteAssignment(selectedAssignment.id) },
                     ]);
                   }}
                   style={[styles.actionButton, styles.actionButtonDanger, { marginTop: 8 }]}
                 >
-                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Aufgabe loeschen</Text>
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Aufgabe löschen</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -2370,7 +2474,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
             <Text style={styles.assignmentTitle}>{selectedAssignment.title}</Text>
             <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
-            <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
+            <Text style={styles.assignmentMeta}>Fällig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
 
             <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Eingereicht</Text>
             {assignmentSubsForSelected.length === 0 && (
@@ -2412,7 +2516,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           </View>
           <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
             <Text style={styles.assignmentTitle}>{selectedSubmission.userName ?? selectedSubmission.userId}</Text>
-            <Text style={styles.assignmentMeta}>Fuer: {selectedAssignment.title}</Text>
+            <Text style={styles.assignmentMeta}>Für: {selectedAssignment.title}</Text>
             <Text style={styles.assignmentMeta}>Eingereicht: {formatAssignmentDue(selectedSubmission.submittedAt)}</Text>
             {!!selectedSubmission.note && (
               <Text style={[styles.assignmentBody, { marginTop: 10 }]}>{selectedSubmission.note}</Text>
@@ -2422,7 +2526,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => Linking.openURL(selectedSubmission.attachmentUrl ?? '').catch(() => {})}
                 style={[styles.attachmentButton, { marginTop: 12 }]}
               >
-                <Text style={styles.attachmentButtonText}>Abgabe-Datei oeffnen</Text>
+                <Text style={styles.attachmentButtonText}>Abgabe-Datei öffnen</Text>
               </TouchableOpacity>
             )}
           </ScrollView>
@@ -2452,7 +2556,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           {[
             { key: 'all', label: 'Alle' },
             { key: 'upcoming', label: 'Bevorstehend' },
-            { key: 'overdue', label: 'Ueberfaellig' },
+            { key: 'overdue', label: 'Überfällig' },
             { key: 'submitted', label: 'Abgegeben' },
           ].map((s) => (
             <TouchableOpacity
@@ -2477,10 +2581,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => openAssignmentDetail(item)}
                 onLongPress={() => {
                   if (!(isTeacher || isDirector)) return;
-                  Alert.alert('Aufgabe', 'Aktion auswaehlen', [
+                  Alert.alert('Aufgabe', 'Aktion auswählen', [
                     { text: 'Abbrechen', style: 'cancel' },
                     {
-                      text: 'Loeschen',
+                      text: 'Löschen',
                       style: 'destructive',
                       onPress: () => deleteAssignment(item.id),
                     },
@@ -2493,7 +2597,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 <Text style={styles.assignmentTitle}>{item.title}</Text>
                 {!!item.description && <Text style={styles.assignmentBody} numberOfLines={2}>{item.description}</Text>}
                 <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(item.groupId)}</Text>
-                <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(item.dueAt)}</Text>
+                <Text style={styles.assignmentMeta}>Fällig: {formatAssignmentDue(item.dueAt)}</Text>
                 {isStudent && (
                   <Text style={[styles.assignmentMetaStrong, { marginTop: 6 }]}>
                     {sub ? `Abgegeben: ${formatAssignmentDue(sub.submittedAt)}` : 'Noch nicht abgegeben'}
@@ -2528,7 +2632,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       {/* Login-Button entfernt: Auth flow steht jetzt ueber /login */}
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
-  <Text style={styles.menuBtnText}>Ankuendigungen</Text>
+  <Text style={styles.menuBtnText}>Ankündigungen</Text>
 </TouchableOpacity>
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('chat')}>
@@ -2574,10 +2678,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                         }}
                         onLongPress={() => {
                           if (!isDirector || selectedOrgId !== item.id) return;
-                          Alert.alert('Verein loeschen?', 'Dieser Verein wird dauerhaft geloescht.', [
+                          Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [
                             { text: 'Abbrechen', style: 'cancel' },
                             {
-                              text: 'Loeschen',
+                              text: 'Löschen',
                               style: 'destructive',
                               onPress: async () => {
                                 const ok = await deleteOrganisationCascade(item.id);
@@ -2653,10 +2757,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => {
                   if (!orgActionTarget) return;
                   const target = orgActionTarget;
-                  Alert.alert('Verein loeschen?', `Soll "${target.name}" dauerhaft geloescht werden?`, [
+                  Alert.alert('Verein löschen?', `Soll "${target.name}" dauerhaft gelöscht werden?`, [
                     { text: 'Abbrechen', style: 'cancel' },
                     {
-                      text: 'Loeschen',
+                      text: 'Löschen',
                       style: 'destructive',
                       onPress: async () => {
                         setOrgActionTarget(null);
@@ -2667,7 +2771,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   ]);
                 }}
               >
-                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Loeschen</Text>
+                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnLink} onPress={() => setOrgActionTarget(null)}>
                 <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -2765,7 +2869,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 </View>
                 <Text style={styles.modalSubtitle}>{manageMembersOrg?.name ?? ''}</Text>
                 {(!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') && (
-                  <Text style={styles.memberHint}>Bearbeitung nur fuer Direktoren moeglich.</Text>
+                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren möglich.</Text>
                 )}
                 {orgMembersLoading ? (
                   <Text style={styles.text}>Lade Mitglieder...</Text>
@@ -2892,17 +2996,17 @@ const styles = StyleSheet.create({
 
   button: {
     backgroundColor: '#194055',   // Hintergrundfarbe
-    paddingVertical: 14,          // Hoehe innen
+    paddingVertical: 14,          // Höhe innen
     paddingHorizontal: 24,        // Breite innen
     borderRadius: 12,             // Runde Ecken
     marginVertical: 8,            // Abstand zwischen Buttons
     width: '80%',                 // Breite relativ zum Container
     alignItems: 'center',         // Text zentrieren
-    shadowColor: '#000',          // Schatten fuer iOS
+    shadowColor: '#000',          // Schatten für iOS
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.5,
-    elevation: 4,                 // Schatten fuer Android
+    elevation: 4,                 // Schatten für Android
   },
   centerButton: { alignSelf: 'center' },
 
@@ -2920,12 +3024,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     top: 2,
   },
-  // Speziell fuer "Zurueck"-Button
+  // Speziell für "Zurück"-Button
   backButton: {
     backgroundColor: '#A93226',   // Rote Variante
   },
 
-  // Text im Zurueck-Button
+  // Text im Zurück-Button
   backButtonText: {
     color: '#fff',
     fontSize: 16,
@@ -3003,9 +3107,11 @@ const styles = StyleSheet.create({
 
   // Chat bubbles
   bubbleRow: { width: '100%', flexDirection: 'row', marginBottom: 8 },
-  bubble: { maxWidth: '80%', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
+  bubble: { maxWidth: '80%', minWidth: 48, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
   bubbleMe: { backgroundColor: '#194055' },
   bubbleOther: { backgroundColor: '#F3F4F6' },
+  bubbleName: { fontSize: 11, fontWeight: '600', color: '#9CA3AF', marginBottom: 4 },
+  bubbleNameMe: { color: '#C7D2D6' },
   bubbleText: { fontSize: 15 },
   bubbleTime: { fontSize: 10, color: '#6B7280', marginTop: 4, alignSelf: 'flex-end' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', width: '100%', maxWidth: 720, marginTop: 1, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#2A3E48' },
