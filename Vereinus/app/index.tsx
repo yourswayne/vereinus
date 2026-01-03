@@ -485,7 +485,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Berechtigung benoetigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufuegen.');
+        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufügen.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -1006,7 +1006,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
   const handleAnnouncementCalendarSync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte waehle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
@@ -1062,7 +1062,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
   };
   const handleAnnouncementCalendarUnsync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte waehle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
@@ -1605,7 +1605,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
                 >
                   <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswaehlen'}
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
                   </Text>
                 </TouchableOpacity>
                 {showAnnouncementDatePicker && Platform.OS === 'ios' && (
@@ -2193,7 +2193,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                           />
                           <View style={styles.videoOverlay}>
                             <Ionicons name="expand" size={22} color="#E5F4EF" />
-                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild oeffnen</Text>
+                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild öffnen</Text>
                           </View>
                         </TouchableOpacity>
                       </View>
@@ -2302,7 +2302,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               autoCorrect={false}
             />
 
-            <Text style={[styles.label, { marginTop: 10 }]}>Faellig bis</Text>
+            <Text style={[styles.label, { marginTop: 10 }]}>Fällig bis</Text>
             <View style={{ flexDirection: 'row' }}>
               <TouchableOpacity
                 style={[styles.datePickerButton, showDueDatePicker && styles.datePickerButtonActive, { flex: 1, marginRight: 8 }]}
@@ -2311,7 +2311,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 <Text style={assignmentDueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
                   {assignmentDueDate
                     ? `${pad(assignmentDueDate.getDate())}.${pad(assignmentDueDate.getMonth() + 1)}.${assignmentDueDate.getFullYear()}`
-                    : 'Datum waehlen'}
+                    : 'Datum wählen'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -2319,7 +2319,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => setShowDueTimePicker((v) => !v)}
               >
                 <Text style={assignmentDueDate ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                  {assignmentDueDate ? `${pad(assignmentDueDate.getHours())}:${pad(assignmentDueDate.getMinutes())}` : 'Zeit waehlen'}
+                  {assignmentDueDate ? `${pad(assignmentDueDate.getHours())}:${pad(assignmentDueDate.getMinutes())}` : 'Zeit wählen'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2389,7 +2389,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               <Text style={styles.assignmentBody}>{selectedAssignment.description}</Text>
             )}
             <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
-            <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
+            <Text style={styles.assignmentMeta}>Fällig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
             {!!selectedAssignment.attachmentUrl && (
               <TouchableOpacity
                 onPress={() => Linking.openURL(selectedAssignment.attachmentUrl ?? '').catch(() => {})}
@@ -2474,7 +2474,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
             <Text style={styles.assignmentTitle}>{selectedAssignment.title}</Text>
             <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
-            <Text style={styles.assignmentMeta}>Faellig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
+            <Text style={styles.assignmentMeta}>Fällig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
 
             <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Eingereicht</Text>
             {assignmentSubsForSelected.length === 0 && (
@@ -2526,7 +2526,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => Linking.openURL(selectedSubmission.attachmentUrl ?? '').catch(() => {})}
                 style={[styles.attachmentButton, { marginTop: 12 }]}
               >
-                <Text style={styles.attachmentButtonText}>Abgabe-Datei oeffnen</Text>
+                <Text style={styles.attachmentButtonText}>Abgabe-Datei öffnen</Text>
               </TouchableOpacity>
             )}
           </ScrollView>
@@ -2581,7 +2581,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => openAssignmentDetail(item)}
                 onLongPress={() => {
                   if (!(isTeacher || isDirector)) return;
-                  Alert.alert('Aufgabe', 'Aktion auswaehlen', [
+                  Alert.alert('Aufgabe', 'Aktion auswählen', [
                     { text: 'Abbrechen', style: 'cancel' },
                     {
                       text: 'Löschen',
@@ -2869,7 +2869,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 </View>
                 <Text style={styles.modalSubtitle}>{manageMembersOrg?.name ?? ''}</Text>
                 {(!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') && (
-                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren moeglich.</Text>
+                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren möglich.</Text>
                 )}
                 {orgMembersLoading ? (
                   <Text style={styles.text}>Lade Mitglieder...</Text>
@@ -2996,7 +2996,7 @@ const styles = StyleSheet.create({
 
   button: {
     backgroundColor: '#194055',   // Hintergrundfarbe
-    paddingVertical: 14,          // Hoehe innen
+    paddingVertical: 14,          // Höhe innen
     paddingHorizontal: 24,        // Breite innen
     borderRadius: 12,             // Runde Ecken
     marginVertical: 8,            // Abstand zwischen Buttons

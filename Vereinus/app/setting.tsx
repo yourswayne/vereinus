@@ -171,7 +171,7 @@ export default function Setting() {
 
       Alert.alert(
         'Erfolg',
-        'Profil gespeichert. Falls du die E-Mail geaendert hast, bitte bestaetigen.',
+        'Profil gespeichert. Falls du die E-Mail geändert hast, bitte bestätigen.',
       );
     } finally {
       setProfileBusy(false);
@@ -228,7 +228,7 @@ export default function Setting() {
         </View>
 
 
-        {/* Einladungscode einloesen */}
+        {/* Einladungscode einlösen */}
         <TouchableOpacity style={styles.btnSecondary} onPress={() => setShowRedeem(true)}>
           <Text style={styles.btnSecondaryText}>Einladungscode einlösen</Text>
         </TouchableOpacity>
@@ -248,13 +248,13 @@ export default function Setting() {
           <Text style={styles.btnText}>Abmelden</Text>
         </TouchableOpacity>
 
-        {/* Modal: Einladungscode einloesen */}
+        {/* Modal: Einladungscode einlösen */}
         <Modal visible={showRedeem} transparent animationType="fade" onRequestClose={() => setShowRedeem(false)}>
           <Pressable style={styles.modalOverlay} onPress={() => setShowRedeem(false)} />
           <View style={styles.modalCenterWrap}>
             <View style={[styles.modalCard, { backgroundColor: '#112a37', borderColor: '#2A3E48' }]}>
               <View style={{ padding: 12 }}>
-                <Text style={[styles.h2, { color: '#E5F4EF' }]}>Einladungscode einloesen</Text>
+                <Text style={[styles.h2, { color: '#E5F4EF' }]}>Einladungscode einlösen</Text>
                 <TextInput style={[styles.input, { color: '#E5F4EF', borderColor: '#2A3E48', backgroundColor: '#0F2530' }]} placeholder='CODE' placeholderTextColor={'#C7D2D6'} autoCapitalize='characters' value={inviteCode} onChangeText={setInviteCode} />
                 <View style={{ flexDirection: 'row' }}>
                   <TouchableOpacity style={[styles.btnLink, { marginRight: 8 }]} onPress={async () => {
@@ -265,7 +265,7 @@ export default function Setting() {
                     else Alert.alert('Erfolg', 'Einladung angenommen.');
                     setInviteCode(''); setShowRedeem(false);
                   }}>
-                    <Text style={[styles.btnLinkText, { color: '#9AD0C1' }]}>Einloesen</Text>
+                    <Text style={[styles.btnLinkText, { color: '#9AD0C1' }]}>Einlösen</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.btnLink} onPress={() => setShowRedeem(false)}>
                     <Text style={[styles.btnLinkTextMuted, { color: '#C7D2D6' }]}>Abbrechen</Text>
@@ -317,7 +317,7 @@ export default function Setting() {
 
                 <View style={{ flexDirection: 'row' }}>
                   <TouchableOpacity style={[styles.btnLink, { marginRight: 8 }]} onPress={async () => {
-                    if (!selectedOrgId) { Alert.alert('Hinweis', 'Bitte Verein waehlen'); return; }
+                    if (!selectedOrgId) { Alert.alert('Hinweis', 'Bitte Verein wählen'); return; }
                     const parsed = parseInt(inviteDays || '2', 10);
                     const days = Math.max(1, Math.min(2, Number.isNaN(parsed) ? 2 : parsed));
                     const { data, error } = await (supabase as any).rpc('create_invite', {
