@@ -453,7 +453,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
   const handleAttachmentButton = () => {
     setShowMediaModal(true);
-    // Direkt Galerie oeffnen, damit sofort etwas passiert; Modal bleibt fuer Links/Dateien offen.
+    // Direkt Galerie öffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
     pickFromLibrary().catch(() => {});
   };
 
@@ -580,7 +580,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Loeschen fehlgeschlagen.');
+      Alert.alert('Fehler', e?.message ?? 'Löschen fehlgeschlagen.');
       return false;
     }
   };
@@ -604,7 +604,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       if (grpDelErr) throw grpDelErr;
       return true;
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht geloescht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Gruppe konnte nicht gelöscht werden.');
       return false;
     }
   };
@@ -907,7 +907,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       }
       closeAnnouncementModal();
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht gespeichert werden.');
+      Alert.alert('Fehler', e?.message ?? 'Ankündigung konnte nicht gespeichert werden.');
     }
   };
 
@@ -924,12 +924,12 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
     const eventId = getAnnouncementCalendarEventId(announcement.id);
     const dateStr = announcement.event_date?.trim();
     if (!dateStr) {
-      Alert.alert('Kalender', 'Diese Ankuendigung hat kein Datum. Bitte fuege zuerst ein Datum hinzu.');
+      Alert.alert('Kalender', 'Diese Ankündigung hat kein Datum. Bitte füge zuerst ein Datum hinzu.');
       return;
     }
     const start = new Date(dateStr);
     if (Number.isNaN(start.getTime())) {
-      Alert.alert('Kalender', 'Das eingetragene Datum ist ungueltig.');
+      Alert.alert('Kalender', 'Das eingetragene Datum ist ungültig.');
       return;
     }
     if (!dateStr.includes('T')) {
@@ -964,10 +964,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         event_payload: payload,
       });
       if (error) throw error;
-      Alert.alert('Kalender', 'Termin wurde fuer alle in den Kalender eingetragen.');
+      Alert.alert('Kalender', 'Termin wurde für alle in den Kalender eingetragen.');
       setCalendarSyncedAnnouncements((prev) => ({ ...prev, [announcement.id]: true }));
     } catch (e: any) {
-      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht uebertragen werden.');
+      Alert.alert('Kalender', e?.message ?? 'Termin konnte nicht übertragen werden.');
     } finally {
       setCalendarQueueBusy(false);
     }
@@ -1016,7 +1016,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
         setAnnouncementModalVisible(false);
       }
     } catch (e: any) {
-      Alert.alert('Fehler', e?.message ?? 'Ankuendigung konnte nicht geloescht werden.');
+      Alert.alert('Fehler', e?.message ?? 'Ankündigung konnte nicht gelöscht werden.');
     }
   };
 
@@ -1038,7 +1038,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       ]);
       if (!alive) return;
       if (annRes.error) {
-        Alert.alert('Fehler', annRes.error.message ?? 'Ankuendigungen konnten nicht geladen werden.');
+        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungungen konnten nicht geladen werden.');
         setAnnRemote([]);
       } else {
         setAnnRemote((annRes.data ?? []) as any[]);
@@ -1146,7 +1146,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
   const [calendarQueueBusy, setCalendarQueueBusy] = useState(false);
   const [announcementCalendarBroadcast, setAnnouncementCalendarBroadcast] = useState(false);
 
-  // Hardware-Back fuer Android
+  // Hardware-Back für Android
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (screen !== 'home') {
@@ -1393,7 +1393,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       return;
     }
     if (!groupId) {
-      Alert.alert('Keine Gruppe', 'Bitte waehle eine Gruppe fuer die Aufgabe.');
+      Alert.alert('Keine Gruppe', 'Bitte wähle eine Gruppe für die Aufgabe.');
       return;
     }
     const dueIso = assignmentDueDate ? assignmentDueDate.toISOString() : undefined;
@@ -1442,7 +1442,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             <Ionicons name="chevron-back" size={22} color="#194055" />
             
           </TouchableOpacity>
-          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankuendigungen</Text>
+          <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 20 }]}>Ankündigungen</Text>
           <View style={{ width: 60 }} />
 
             {!!groups.length && (
@@ -1479,7 +1479,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               )}
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankuendigungen vorhanden.'}</Text>}
+          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
         />
 
 
@@ -1487,7 +1487,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
 
         {canCreateAnnouncement && (
           <TouchableOpacity style={[styles.button, styles.annButton]} onPress={() => openAnnouncementModal('create')}>
-            <Text style={styles.buttonText}>+ Neue Ankuendigung</Text>
+            <Text style={styles.buttonText}>+ Neue Ankündigung</Text>
           </TouchableOpacity>
         )}
 
@@ -1497,7 +1497,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={[styles.modalCard, styles.orgModalCard, styles.announcementModalCard]}>
               <View style={{ padding: 12 }}>
-                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankuendigung bearbeiten' : 'Neue Ankuendigung'}</Text>
+                <Text style={[styles.sectionTitle,  ]}>{announcementModalMode === 'edit' ? 'Ankündigung bearbeiten' : 'Neue Ankündigung'}</Text>
                 <TextInput style={styles.input} placeholder="Titel" placeholderTextColor={'#95959588'} value={announcementTitle} onChangeText={setAnnouncementTitle} />
                 <TextInput
                   style={[styles.input, styles.textarea]}
@@ -1542,8 +1542,8 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     {announcementCalendarBroadcast && <Ionicons name="checkmark" size={16} color="#0F2530" />}
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.calendarToggleLabel}>Im Kalender fuer alle eintragen</Text>
-                    <Text style={styles.calendarToggleHint}>Legt nach dem Speichern automatisch einen Termin fuer deinen Verein an.</Text>
+                    <Text style={styles.calendarToggleLabel}>Im Kalender für alle eintragen</Text>
+                    <Text style={styles.calendarToggleHint}>Legt nach dem Speichern automatisch einen Termin für deinen Verein an.</Text>
                   </View>
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row' }}>
@@ -1566,7 +1566,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
             <View style={styles.modalCard}>
               <View style={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>Ankuendigung</Text>
+                <Text style={styles.sectionTitle}>Ankündigung</Text>
                 {!!announcementActionTarget && (
                   <Text style={styles.modalSubtitle}>{announcementActionTarget.title}</Text>
                 )}
@@ -1596,8 +1596,8 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 >
                   <Text style={styles.actionButtonText}>
                     {announcementActionTarget && calendarSyncedAnnouncements[announcementActionTarget.id]
-                      ? 'Im Kalender fuer alle austragen'
-                      : 'Im Kalender fuer alle eintragen'}
+                      ? 'Im Kalender für alle austragen'
+                      : 'Im Kalender für alle eintragen'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1605,10 +1605,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   onPress={() => {
                     if (!announcementActionTarget) return;
                     const target = announcementActionTarget;
-                    Alert.alert('Ankuendigung loeschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
+                    Alert.alert('Ankündigung löschen', `Soll "${target.title}" dauerhaft entfernt werden?`, [
                       { text: 'Abbrechen', style: 'cancel' },
                       {
-                        text: 'Loeeschen',
+                        text: 'Löschen',
                         style: 'destructive',
                         onPress: async () => {
                           setAnnouncementActionTarget(null);
@@ -1618,7 +1618,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     ]);
                   }}
                 >
-                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Loeschen</Text>
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.btnLink} onPress={() => setAnnouncementActionTarget(null)}>
                   <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -1645,7 +1645,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanaele</Text>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Kommunikationskanäle</Text>
             <View style={{ width: 60 }} />
           </View>
           <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
@@ -1747,13 +1747,13 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       if (!groupActionTarget) return;
                       const target = groupActionTarget;
                       setGroupActionTarget(null);
-                      Alert.alert('Gruppe loeschen', `Soll die Gruppe "${target.name}" wirklich geloescht werden?`, [
+                      Alert.alert('Gruppe löschen', `Soll die Gruppe "${target.name}" wirklich gelöscht werden?`, [
                         { text: 'Abbrechen', style: 'cancel' },
-                        { text: 'Loeschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
+                        { text: 'Löschen', style: 'destructive', onPress: () => { handleGroupDelete(target.id); } },
                       ]);
                     }}
                   >
-                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe loeschen</Text>
+                    <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Gruppe löschen</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.btnLink} onPress={() => setGroupActionTarget(null)}>
                     <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -1818,7 +1818,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
             keyExtractor={(m) => m.id}
             renderItem={renderItem}
           />
-          {/* Kanal-Hinweis entfernt: fuer Director wird automatisch ein Standardkanal erstellt */}
+          {/* Kanal-Hinweis entfernt: für Director wird automatisch ein Standardkanal erstellt */}
           <View style={[styles.inputRow, { marginBottom: bottomGap}]}> 
             <TextInput
               style={[styles.input, { flex: 1, marginBottom: 0, height: chatInputHeight, maxHeight: MAX_CHAT_INPUT_HEIGHT }]}
@@ -1936,7 +1936,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           <View style={styles.modalCenterWrap}>
               <View style={[styles.modalCard, styles.orgModalCard]}>
               <ScrollView contentContainerStyle={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>{editingExerciseId ? 'uebung bearbeiten' : 'uebung anlegen'}</Text>
+                <Text style={styles.sectionTitle}>{editingExerciseId ? 'Übung bearbeiten' : 'Übung anlegen'}</Text>
                 <Text style={styles.label}>Titel</Text>
                 <View style={styles.formatBar}>
                   {renderStyleToggle('title', 'bold', 'B')}
@@ -2123,10 +2123,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                     <TouchableOpacity
                       onPress={() => {
                         if (!selectedExercise) return;
-                        Alert.alert('uebung loeschen?', 'Diese uebung wird entfernt.', [
+                        Alert.alert('Übung löschen?', 'Diese Übung wird entfernt.', [
                           { text: 'Abbrechen', style: 'cancel' },
                           {
-                            text: 'Loeschen',
+                            text: 'Löschen',
                             style: 'destructive',
                             onPress: () => deleteExercise(selectedExercise.id),
                           },
@@ -2134,7 +2134,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                       }}
                       style={[styles.actionButton, styles.actionButtonDanger, { flex: 1 }]}
                     >
-                      <Text style={styles.actionButtonDangerText}>Loeschen</Text>
+                      <Text style={styles.actionButtonDangerText}>Löschen</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -2340,14 +2340,14 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
               {(isTeacher || isDirector) && (
                 <TouchableOpacity
                   onPress={() => {
-                    Alert.alert('Aufgabe loeschen', 'Diese Aufgabe und Abgaben entfernen?', [
+                    Alert.alert('Aufgabe löschen', 'Diese Aufgabe und Abgaben entfernen?', [
                       { text: 'Abbrechen', style: 'cancel' },
-                      { text: 'Loeschen', style: 'destructive', onPress: () => selectedAssignment && deleteAssignment(selectedAssignment.id) },
+                      { text: 'Löschen', style: 'destructive', onPress: () => selectedAssignment && deleteAssignment(selectedAssignment.id) },
                     ]);
                   }}
                   style={[styles.actionButton, styles.actionButtonDanger, { marginTop: 8 }]}
                 >
-                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Aufgabe loeschen</Text>
+                  <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Aufgabe löschen</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -2412,7 +2412,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
           </View>
           <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
             <Text style={styles.assignmentTitle}>{selectedSubmission.userName ?? selectedSubmission.userId}</Text>
-            <Text style={styles.assignmentMeta}>Fuer: {selectedAssignment.title}</Text>
+            <Text style={styles.assignmentMeta}>Für: {selectedAssignment.title}</Text>
             <Text style={styles.assignmentMeta}>Eingereicht: {formatAssignmentDue(selectedSubmission.submittedAt)}</Text>
             {!!selectedSubmission.note && (
               <Text style={[styles.assignmentBody, { marginTop: 10 }]}>{selectedSubmission.note}</Text>
@@ -2480,7 +2480,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   Alert.alert('Aufgabe', 'Aktion auswaehlen', [
                     { text: 'Abbrechen', style: 'cancel' },
                     {
-                      text: 'Loeschen',
+                      text: 'Löschen',
                       style: 'destructive',
                       onPress: () => deleteAssignment(item.id),
                     },
@@ -2528,7 +2528,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
       {/* Login-Button entfernt: Auth flow steht jetzt ueber /login */}
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
-  <Text style={styles.menuBtnText}>Ankuendigungen</Text>
+  <Text style={styles.menuBtnText}>Ankündigungen</Text>
 </TouchableOpacity>
 
 <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('chat')}>
@@ -2574,10 +2574,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                         }}
                         onLongPress={() => {
                           if (!isDirector || selectedOrgId !== item.id) return;
-                          Alert.alert('Verein loeschen?', 'Dieser Verein wird dauerhaft geloescht.', [
+                          Alert.alert('Verein löschen?', 'Dieser Verein wird dauerhaft gelöscht.', [
                             { text: 'Abbrechen', style: 'cancel' },
                             {
-                              text: 'Loeschen',
+                              text: 'Löschen',
                               style: 'destructive',
                               onPress: async () => {
                                 const ok = await deleteOrganisationCascade(item.id);
@@ -2653,10 +2653,10 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 onPress={() => {
                   if (!orgActionTarget) return;
                   const target = orgActionTarget;
-                  Alert.alert('Verein loeschen?', `Soll "${target.name}" dauerhaft geloescht werden?`, [
+                  Alert.alert('Verein löschen?', `Soll "${target.name}" dauerhaft gelöscht werden?`, [
                     { text: 'Abbrechen', style: 'cancel' },
                     {
-                      text: 'Loeschen',
+                      text: 'Löschen',
                       style: 'destructive',
                       onPress: async () => {
                         setOrgActionTarget(null);
@@ -2667,7 +2667,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                   ]);
                 }}
               >
-                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Loeschen</Text>
+                <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Löschen</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.btnLink} onPress={() => setOrgActionTarget(null)}>
                 <Text style={styles.btnLinkTextMuted}>Abbrechen</Text>
@@ -2765,7 +2765,7 @@ const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: str
                 </View>
                 <Text style={styles.modalSubtitle}>{manageMembersOrg?.name ?? ''}</Text>
                 {(!manageMembersOrg || orgRoles[manageMembersOrg.id] !== 'director') && (
-                  <Text style={styles.memberHint}>Bearbeitung nur fuer Direktoren moeglich.</Text>
+                  <Text style={styles.memberHint}>Bearbeitung nur für Direktoren moeglich.</Text>
                 )}
                 {orgMembersLoading ? (
                   <Text style={styles.text}>Lade Mitglieder...</Text>
@@ -2898,11 +2898,11 @@ const styles = StyleSheet.create({
     marginVertical: 8,            // Abstand zwischen Buttons
     width: '80%',                 // Breite relativ zum Container
     alignItems: 'center',         // Text zentrieren
-    shadowColor: '#000',          // Schatten fuer iOS
+    shadowColor: '#000',          // Schatten für iOS
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.5,
-    elevation: 4,                 // Schatten fuer Android
+    elevation: 4,                 // Schatten für Android
   },
   centerButton: { alignSelf: 'center' },
 
@@ -2920,12 +2920,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     top: 2,
   },
-  // Speziell fuer "Zurueck"-Button
+  // Speziell für "Zurück"-Button
   backButton: {
     backgroundColor: '#A93226',   // Rote Variante
   },
 
-  // Text im Zurueck-Button
+  // Text im Zurück-Button
   backButtonText: {
     color: '#fff',
     fontSize: 16,

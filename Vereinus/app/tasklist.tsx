@@ -187,7 +187,7 @@ function SimpleDropdown<T extends { id: string; name: string }>(
                   }}
                   style={styles.dropdownItem}
                 >
-                  <Text numberOfLines={1} style={styles.dropdownItemText}>+ Liste hinzufuegen...</Text>
+                  <Text numberOfLines={1} style={styles.dropdownItemText}>+ Liste hinzufügen...</Text>
                 </TouchableOpacity>
               )}
             />
@@ -318,7 +318,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('start')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -340,7 +340,7 @@ const DateRangeInputs = ({
               </>
             ) : (
               <TouchableOpacity onPress={() => addTimeNow('end')} style={styles.btnLink}>
-                <Text style={styles.btnLinkText}>Uhrzeit hinzufuegen</Text>
+                <Text style={styles.btnLinkText}>Uhrzeit hinzufügen</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -380,10 +380,10 @@ const DateRangeInputs = ({
     );
   }
 
-  const startDateLabel = startAt?.split(' ')[0] ?? 'Datum waehlen';
-  const startTimeLabel = startAt?.split(' ')[1] ?? 'Uhrzeit hinzufuegen (optional)';
-  const endDateLabel = endAt?.split(' ')[0] ?? 'Datum waehlen';
-  const endTimeLabel = endAt?.split(' ')[1] ?? 'Uhrzeit hinzufuegen (optional)';
+  const startDateLabel = startAt?.split(' ')[0] ?? 'Datum wählen';
+  const startTimeLabel = startAt?.split(' ')[1] ?? 'Uhrzeit hinzufügen (optional)';
+  const endDateLabel = endAt?.split(' ')[0] ?? 'Datum wählen';
+  const endTimeLabel = endAt?.split(' ')[1] ?? 'Uhrzeit hinzufügen (optional)';
 
   return (
     <View>
@@ -903,12 +903,12 @@ export default function Tasklist() {
             data={lists}
             selectedId={selectedListId}
             onChange={(val) => setSelectedListId(val)}
-            placeholder="Liste waehlen"
+            placeholder="Liste wählen"
             style={{ color: '#FFFFFF' }}
           />
         </View>
         <TouchableOpacity onPress={deleteCurrentList} style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>Liste loeschen</Text>
+          <Text style={styles.iconBtnText}>Liste löschen</Text>
         </TouchableOpacity>
       </View>
 
@@ -916,7 +916,7 @@ export default function Tasklist() {
         {[
           { key: 'all', label: 'Alle' },
           { key: 'upcoming', label: 'Bevorstehend' },
-          { key: 'overdue', label: 'Ueberfaellig' },
+          { key: 'overdue', label: 'Überfällig' },
           { key: 'done', label: 'Erledigt' },
         ].map((s) => (
           <TouchableOpacity
@@ -970,7 +970,7 @@ export default function Tasklist() {
                   }}
                   style={[styles.btnLink, styles.mr8]}
                 >
-                  <Text style={styles.btnLinkTextAdd}>Hinzufuegen</Text>
+                  <Text style={styles.btnLinkTextAdd}>Hinzufügen</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
@@ -991,7 +991,7 @@ export default function Tasklist() {
       </Modal>
 
             <TouchableOpacity onPress={() => setShowCreate((s) => !s)} style={styles.btnLink}>
-        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufuegen</Text>
+        <Text style={styles.btnLinkTextAddTask}>+ Aufgabe hinzufügen</Text>
       </TouchableOpacity>
 
       
