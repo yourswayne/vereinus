@@ -137,7 +137,7 @@ function SimpleDropdown<T extends { id: string; name: string }>(
     data,
     selectedId,
     onChange,
-    placeholder = 'Liste waehlen',
+    placeholder = 'Liste wählen',
     style,
   }: {
     data: T[];
@@ -276,7 +276,7 @@ const DateRangeInputs = ({
     setPicker(null);
   };
 
-  // iOS: direkte kompakte Picker ohne zusaetzliche Inputs
+  // iOS: direkte kompakte Picker ohne zusätzliche Inputs
   if (Platform.OS === 'ios') {
     const startDate = parseDateTime(startAt) ?? new Date();
     const endDate = parseDateTime(endAt) ?? new Date();
@@ -601,10 +601,10 @@ export default function Tasklist() {
 
   const deleteCurrentList = useCallback(() => {
     if (!currentList) return;
-    Alert.alert('Liste loeschen', `Soll die Liste "${currentList.name}" wirklich geloescht werden?`, [
+    Alert.alert('Liste löschen', `Soll die Liste "${currentList.name}" wirklich gelöscht werden?`, [
       { text: 'Abbrechen', style: 'cancel' },
       {
-        text: 'Loeschen',
+        text: 'Löschen',
         style: 'destructive',
         onPress: () => {
           setLists((prev) => {

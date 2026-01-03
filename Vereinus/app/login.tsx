@@ -17,7 +17,7 @@ export default function Login() {
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!mounted) return;
-      // RootLayout reagiert auf Session-Änderungen; keine Navigation nötig
+      // RootLayout reagiert auf Session-ï¿½nderungen; keine Navigation nï¿½tig
     })();
     return () => { mounted = false; };
   }, []);
@@ -161,7 +161,7 @@ export default function Login() {
           }
         }
         // Wenn E-Mail-Verifizierung aktiviert ist, existiert noch keine Session.
-        setInfo('Bitte E-Mail bestaetigen. Wir haben dir eine Bestaetigungsmail gesendet.');
+        setInfo('Bitte E-Mail bestÃ¤tigen. Wir haben dir eine BestÃ¤tigungsmail gesendet.');
       }
     }
   };
@@ -183,7 +183,7 @@ export default function Login() {
         <Text style={styles.brand}>Vereinus</Text>
       </View>
       {/*
-        App-Logo: feste Größe, rund, nicht bildschirmfüllend
+        App-Logo: feste Grï¿½ï¿½e, rund, nicht bildschirmfï¿½llend
         <Image
           source={require('../assets/images/vereinus_logo1.png')}
           style={{ width: 96, height: 96, marginBottom: 8 }}
