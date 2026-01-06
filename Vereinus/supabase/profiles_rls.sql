@@ -5,6 +5,25 @@ alter table public.profiles enable row level security;
 
 grant select, insert, update on public.profiles to authenticated;
 
+-- Helper to check shared org membership without relying on organisation_members RLS.
+create or replace function public.profile_in_my_org(p_profile uuid)
+returns boolean
+security definer
+set search_path = public
+language sql
+as $function$
+  select exists (
+    select 1
+    from public.organisation_members me
+    join public.organisation_members other
+      on other.org_id = me.org_id
+    where me.user_id = auth.uid()
+      and other.user_id = p_profile
+  );
+$function$;
+
+grant execute on function public.profile_in_my_org(uuid) to authenticated, service_role;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -28,16 +47,11 @@ BEGIN
     CREATE POLICY profiles_select_shared_org
       ON public.profiles
       FOR SELECT
-      USING (
-        EXISTS (
-          SELECT 1
-          FROM public.organisation_members me
-          JOIN public.organisation_members other
-            ON other.org_id = me.org_id
-          WHERE me.user_id = auth.uid()
-            AND other.user_id = id
-        )
-      );
+      USING (public.profile_in_my_org(id));
+  ELSE
+    ALTER POLICY profiles_select_shared_org
+      ON public.profiles
+      USING (public.profile_in_my_org(id));
   END IF;
 
   IF NOT EXISTS (

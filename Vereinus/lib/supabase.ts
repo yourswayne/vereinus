@@ -8,6 +8,8 @@ const DEFAULT_URL = 'https://jeruntnmpdiijlqkfpfr.supabase.co';
 const DEFAULT_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplcnVudG5tcGRpaWpscWtmcGZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1MjAyOTUsImV4cCI6MjA3NjA5NjI5NX0.6s-8etdG2YALLnnq7ob8W0bw7sZj3_LsOU2UWXr4MyE';
 const url = (extra.EXPO_PUBLIC_SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || DEFAULT_URL) as string | undefined;
 const anon = (extra.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_ANON) as string | undefined;
+export const supabaseUrl = url;
+export const supabaseAnonKey = anon;
 
 // CHANGE: treat any non-empty url as valid (do not compare against DEFAULT_URL)
 const isPlaceholderProject = !url;
