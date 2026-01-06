@@ -15,9 +15,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PinchGestureHandler, State } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUsingFallback } from '../lib/supabase';
 import { useFocusEffect } from '@react-navigation/native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type CalendarViewMode = 'week' | 'month' | 'year';
 type CalendarEvent = {
@@ -29,7 +30,7 @@ type CalendarEvent = {
   orgId?: string | null;
   scope: 'self' | 'org';
   readOnly?: boolean;
-  source?: 'local' | 'remote';
+  source?: 'local' | 'remote' | 'tasklist' | 'assignment';
 };
 type MonthCell = { date: Date; inMonth: boolean };
 type EventDraft = {
@@ -90,6 +91,13 @@ const formatWeekRange = (start: Date) => {
     .padStart(2, '0')}.`;
   return `${fmt(start)} - ${fmt(end)}`;
 };
+const parseLocalDateOnly = (value?: string) => {
+  if (!value) return null;
+  const datePart = value.split('T')[0];
+  const [year, month, day] = datePart.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+};
 const buildMonthMatrix = (reference: Date): MonthCell[][] => {
   const year = reference.getFullYear();
   const month = reference.getMonth();
@@ -120,6 +128,35 @@ const formatLongDate = (date: Date) =>
     .toString()
     .padStart(2, '0')}.${date.getFullYear()}`;
 const formatTimeRange = (start: Date, end: Date) => `${formatTime(start)} - ${formatTime(end)}`;
+const DEFAULT_EVENT_MINUTES = 15;
+const parseTaskDateTime = (value?: string) => {
+  if (!value) return null;
+  const [datePart, timePart] = value.split(' ');
+  const [year, month, day] = datePart.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const hasTime = Boolean(timePart);
+  const [hour, minute] = hasTime ? timePart.split(':').map(Number) : [0, 0];
+  const date = new Date(year, (month ?? 1) - 1, day ?? 1, hour ?? 0, minute ?? 0, 0, 0);
+  return { date, hasTime };
+};
+const buildDefaultEnd = (start: Date, minutes = DEFAULT_EVENT_MINUTES) => (
+  new Date(start.getTime() + minutes * 60 * 1000)
+);
+const buildTaskEventWindow = (startAt?: string, endAt?: string) => {
+  const startInfo = parseTaskDateTime(startAt);
+  const endInfo = parseTaskDateTime(endAt);
+  if (!startInfo && !endInfo) return null;
+  const start = startInfo?.date ?? endInfo!.date;
+  let end = endInfo?.date ?? null;
+  if (!startInfo?.hasTime && !endInfo?.hasTime) {
+    end = buildDefaultEnd(start);
+  } else if (!end) {
+    end = buildDefaultEnd(start);
+  } else if (end.getTime() <= start.getTime()) {
+    end = buildDefaultEnd(start);
+  }
+  return { start, end };
+};
 
 export default function Calender() {
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
@@ -128,14 +165,16 @@ export default function Calender() {
   const pinchStartHeight = useRef(hourHeight);
   const [localEvents, setLocalEvents] = useState<CalendarEvent[]>([]);
   const [remoteEvents, setRemoteEvents] = useState<CalendarEvent[]>([]);
+  const [taskEvents, setTaskEvents] = useState<CalendarEvent[]>([]);
+  const [assignmentEvents, setAssignmentEvents] = useState<CalendarEvent[]>([]);
   const events = useMemo(() => {
     const map = new Map<string, CalendarEvent>();
-    [...remoteEvents, ...localEvents].forEach((evt) => {
+    [...remoteEvents, ...localEvents, ...taskEvents, ...assignmentEvents].forEach((evt) => {
       const key = `${evt.id}-${evt.start}`;
       map.set(key, evt);
     });
     return Array.from(map.values());
-  }, [remoteEvents, localEvents]);
+  }, [assignmentEvents, localEvents, remoteEvents, taskEvents]);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [pickerYear, setPickerYear] = useState(referenceDate.getFullYear());
   const [eventModalVisible, setEventModalVisible] = useState(false);
@@ -149,6 +188,8 @@ export default function Calender() {
   const [timePickerValue, setTimePickerValue] = useState(new Date());
   const [gridWidth, setGridWidth] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+  const TASKLIST_STORAGE_KEY = '@vereinus/tasklists';
+  const ASSIGNMENTS_STORAGE_KEY = '@vereinus/assignments';
   const handleScopeChange = (scope: EventDraft['scope']) => {
     setEventDraft((prev) => {
       if (!prev) return prev;
@@ -199,6 +240,193 @@ export default function Calender() {
     }));
     setLocalEvents(mapped);
   }, [sessionUserId]);
+
+  const refreshTasklistEvents = useCallback(async () => {
+    const storageKey = sessionUserId ? `${TASKLIST_STORAGE_KEY}:${sessionUserId}` : TASKLIST_STORAGE_KEY;
+    const loadFromStorage = async () => {
+      const raw = await AsyncStorage.getItem(storageKey);
+      const lists = raw ? JSON.parse(raw) : [];
+      const next: CalendarEvent[] = [];
+      (lists ?? []).forEach((list: any) => {
+        const tasks = Array.isArray(list?.tasks) ? list.tasks : [];
+        tasks.forEach((task: any) => {
+          if (task?.done) return;
+          const window = buildTaskEventWindow(task?.startAt, task?.endAt);
+          if (!window) return;
+          next.push({
+            id: `task-${list?.id ?? 'list'}-${task?.id ?? Date.now()}`,
+            title: task?.title ?? 'Aufgabe',
+            description: task?.description ?? '',
+            start: window.start.toISOString(),
+            end: window.end.toISOString(),
+            orgId: null,
+            scope: 'self',
+            readOnly: true,
+            source: 'tasklist',
+          });
+        });
+      });
+      setTaskEvents(next);
+    };
+
+    if (supabaseUsingFallback || !sessionUserId) {
+      try {
+        await loadFromStorage();
+      } catch {
+        setTaskEvents([]);
+      }
+      return;
+    }
+
+    try {
+      const listRes = await supabase
+        .from('task_lists')
+        .select('id')
+        .eq('user_id', sessionUserId)
+        .eq('kind', 'user');
+      const listRows = (listRes as any)?.data ?? [];
+      const listIds = listRows.map((row: any) => row.id).filter(Boolean);
+      if (!listIds.length) {
+        setTaskEvents([]);
+        return;
+      }
+      const taskRes = await supabase
+        .from('tasks')
+        .select('id, list_id, title, description, start_at, due_at, done')
+        .in('list_id', listIds);
+      const taskRows = (taskRes as any)?.data ?? [];
+      const next: CalendarEvent[] = [];
+      taskRows.forEach((row: any) => {
+        if (row?.done) return;
+        const start = row?.start_at ? new Date(row.start_at) : row?.due_at ? new Date(row.due_at) : null;
+        if (!start || Number.isNaN(start.getTime())) return;
+        let end = row?.due_at ? new Date(row.due_at) : null;
+        if (!end || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+          end = buildDefaultEnd(start);
+        }
+        next.push({
+          id: `task-${row?.list_id ?? 'list'}-${row?.id ?? Date.now()}`,
+          title: row?.title ?? 'Aufgabe',
+          description: row?.description ?? '',
+          start: start.toISOString(),
+          end: end.toISOString(),
+          orgId: null,
+          scope: 'self',
+          readOnly: true,
+          source: 'tasklist',
+        });
+      });
+      setTaskEvents(next);
+    } catch {
+      try {
+        await loadFromStorage();
+      } catch {
+        setTaskEvents([]);
+      }
+    }
+  }, [TASKLIST_STORAGE_KEY, sessionUserId, supabaseUsingFallback]);
+
+  const refreshAssignmentEvents = useCallback(async () => {
+    if (!orgs.length) {
+      setAssignmentEvents([]);
+      return;
+    }
+
+    const loadFromStorage = async () => {
+      const keys = Array.from(new Set([
+        `${ASSIGNMENTS_STORAGE_KEY}:default`,
+        ...orgs.map((org) => `${ASSIGNMENTS_STORAGE_KEY}:${org.id}`),
+      ]));
+      const raws = await Promise.all(keys.map((key) => AsyncStorage.getItem(key)));
+      const allAssignments = raws.flatMap((raw) => {
+        if (!raw) return [];
+        try {
+          return JSON.parse(raw) ?? [];
+        } catch {
+          return [];
+        }
+      });
+      const dedup = new Map<string, any>();
+      allAssignments.forEach((assignment: any) => {
+        if (assignment?.id) dedup.set(assignment.id, assignment);
+      });
+      const next: CalendarEvent[] = [];
+      dedup.forEach((assignment) => {
+        if (!assignment?.dueAt) return;
+        const due = new Date(assignment.dueAt);
+        if (Number.isNaN(due.getTime())) return;
+        const end = buildDefaultEnd(due);
+        next.push({
+          id: `assignment-${assignment.id}`,
+          title: assignment.title ?? 'Aufgabe',
+          description: assignment.description ?? '',
+          start: due.toISOString(),
+          end: end.toISOString(),
+          orgId: assignment.orgId ?? null,
+          scope: 'org',
+          readOnly: true,
+          source: 'assignment',
+        });
+      });
+      setAssignmentEvents(next);
+    };
+
+    if (supabaseUsingFallback || !sessionUserId) {
+      try {
+        await loadFromStorage();
+      } catch {
+        setAssignmentEvents([]);
+      }
+      return;
+    }
+
+    try {
+      const orgIds = orgs.map((org) => org.id);
+      const groupRes = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', sessionUserId);
+      const groupRows = (groupRes as any)?.data ?? [];
+      const groupIds = new Set(groupRows.map((row: any) => row.group_id).filter(Boolean));
+
+      const assignmentRes = await supabase
+        .from('assignments')
+        .select('id, org_id, group_id, title, description, due_at')
+        .in('org_id', orgIds);
+      const rows = (assignmentRes as any)?.data ?? [];
+      if ((assignmentRes as any)?.error) throw (assignmentRes as any).error;
+
+      const next: CalendarEvent[] = [];
+      rows.forEach((row: any) => {
+        const role = row?.org_id ? roleByOrg[row.org_id] : undefined;
+        if (role !== 'director') {
+          if (!row?.group_id || !groupIds.has(row.group_id)) return;
+        }
+        if (!row?.due_at) return;
+        const due = new Date(row.due_at);
+        if (Number.isNaN(due.getTime())) return;
+        const end = buildDefaultEnd(due);
+        next.push({
+          id: `assignment-${row.id}`,
+          title: row.title ?? 'Aufgabe',
+          description: row.description ?? '',
+          start: due.toISOString(),
+          end: end.toISOString(),
+          orgId: row.org_id ?? null,
+          scope: 'org',
+          readOnly: true,
+          source: 'assignment',
+        });
+      });
+      setAssignmentEvents(next);
+    } catch {
+      try {
+        await loadFromStorage();
+      } catch {
+        setAssignmentEvents([]);
+      }
+    }
+  }, [ASSIGNMENTS_STORAGE_KEY, orgs, roleByOrg, sessionUserId, supabaseUsingFallback]);
 
   useEffect(() => {
     let alive = true;
@@ -260,31 +488,40 @@ export default function Calender() {
         id?: string;
         title?: string;
         description?: string | null;
-          start?: string;
-          end?: string;
-          orgId?: string | null;
-          scope?: 'self' | 'org';
-        } | null;
-        if (!payload?.start) return null;
-        const start = new Date(payload.start);
-        if (Number.isNaN(start.getTime())) return null;
-        if (start < rangeStart || start > rangeEnd) return null;
-        let end = payload.end ? new Date(payload.end) : null;
-        if (!end || Number.isNaN(end.getTime())) end = new Date(start.getTime() + 60 * 60 * 1000);
-        const baseId = payload.id ?? `remote-${row.id}`;
-        const event: CalendarEvent = {
-          id: baseId,
-          title: payload.title ?? 'Termin',
-          description: payload.description ?? '',
-          start: start.toISOString(),
-          end: end.toISOString(),
-          orgId: payload.orgId ?? row.org_id ?? null,
-          scope: payload.scope ?? 'org',
-          readOnly: true,
-          source: 'remote',
-        };
-        eventsMap.set(baseId, event);
-      });
+        start?: string;
+        end?: string;
+        orgId?: string | null;
+        scope?: 'self' | 'org';
+        source?: string;
+        announcementId?: string | null;
+      } | null;
+      if (!payload?.start) return null;
+      const isAnnouncement = payload.source === 'announcement'
+        || !!payload.announcementId
+        || String(payload.id ?? '').startsWith('ann-');
+      const parsedDate = parseLocalDateOnly(payload.start);
+      let start = parsedDate ? new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), 0, 0, 0, 0) : new Date(payload.start);
+      if (Number.isNaN(start.getTime())) return null;
+      if (start < rangeStart || start > rangeEnd) return null;
+      let end = payload.end ? new Date(payload.end) : null;
+      if (isAnnouncement && parsedDate) {
+        end = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), 23, 59, 59, 999);
+      }
+      if (!end || Number.isNaN(end.getTime())) end = new Date(start.getTime() + 60 * 60 * 1000);
+      const baseId = payload.id ?? `remote-${row.id}`;
+      const event: CalendarEvent = {
+        id: baseId,
+        title: payload.title ?? 'Termin',
+        description: payload.description ?? '',
+        start: start.toISOString(),
+        end: end.toISOString(),
+        orgId: payload.orgId ?? row.org_id ?? null,
+        scope: payload.scope ?? 'org',
+        readOnly: true,
+        source: 'remote',
+      };
+      eventsMap.set(baseId, event);
+    });
     setRemoteEvents(Array.from(eventsMap.values()));
   }, [orgs]);
 
@@ -296,10 +533,20 @@ export default function Calender() {
     refreshPersonalEvents();
   }, [refreshPersonalEvents]);
 
+  useEffect(() => {
+    refreshTasklistEvents();
+  }, [refreshTasklistEvents]);
+
+  useEffect(() => {
+    refreshAssignmentEvents();
+  }, [refreshAssignmentEvents]);
+
   useFocusEffect(
     useCallback(() => {
       refreshRemoteEvents();
-    }, [refreshRemoteEvents]),
+      refreshTasklistEvents();
+      refreshAssignmentEvents();
+    }, [refreshAssignmentEvents, refreshRemoteEvents, refreshTasklistEvents]),
   );
 
   useEffect(() => {
@@ -402,6 +649,10 @@ export default function Calender() {
       Alert.alert('Login erforderlich', 'Bitte melde dich an, um persönliche Termine zu speichern.');
       return;
     }
+    if (supabaseUsingFallback) {
+      Alert.alert('Supabase offline', 'Termine koennen gerade nicht gespeichert werden.');
+      return;
+    }
     const eventId = editingEventId ?? `${Date.now()}`;
     const payload: CalendarEvent = {
       id: eventId,
@@ -428,12 +679,18 @@ export default function Calender() {
           .eq('user_id', sessionUserId)
           .select('id,title,description,start,end')
           .single();
-        if (!error && data) {
-          payload.id = data.id;
-          payload.start = new Date(data.start).toISOString();
-          payload.end = new Date(data.end).toISOString();
-          setLocalEvents((prev) => prev.map((evt) => (evt.id === editingEventId ? payload : evt)));
+        if (error) {
+          Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+          return;
         }
+        if (!data) {
+          Alert.alert('Kalender', 'Termin konnte nicht gespeichert werden.');
+          return;
+        }
+        payload.id = data.id;
+        payload.start = new Date(data.start).toISOString();
+        payload.end = new Date(data.end).toISOString();
+        setLocalEvents((prev) => prev.map((evt) => (evt.id === editingEventId ? payload : evt)));
       } else {
         const { data, error } = await supabase
           .from('personal_calendar_events')
@@ -446,35 +703,41 @@ export default function Calender() {
           })
           .select('id,title,description,start,end')
           .single();
-        if (!error && data) {
-          payload.id = data.id;
-          payload.start = new Date(data.start).toISOString();
-          payload.end = new Date(data.end).toISOString();
-          setLocalEvents((prev) => [...prev, payload]);
+        if (error) {
+          Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+          return;
         }
+        if (!data) {
+          Alert.alert('Kalender', 'Termin konnte nicht gespeichert werden.');
+          return;
+        }
+        payload.id = data.id;
+        payload.start = new Date(data.start).toISOString();
+        payload.end = new Date(data.end).toISOString();
+        setLocalEvents((prev) => [...prev, payload]);
       }
     } else {
       // org scope: keep localEvents unchanged; remote fetch will refresh
+    }
+    if (eventDraft.scope === 'org' && eventDraft.orgId) {
+      const { error } = await supabase
+        .from('calendar_sync_queue')
+        .insert({
+          event_payload: payload,
+          org_id: eventDraft.orgId,
+        });
+      if (error) {
+        Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      refreshRemoteEvents();
+    } else {
+      refreshPersonalEvents();
     }
     // close event modal inline to avoid referencing a callback declared later
     setEventModalVisible(false);
     setEventDraft(null);
     setEditingEventId(null);
-    if (eventDraft.scope === 'org' && eventDraft.orgId) {
-      try {
-        await supabase
-          .from('calendar_sync_queue')
-          .insert({
-            event_payload: payload,
-            org_id: eventDraft.orgId,
-          });
-        refreshRemoteEvents();
-      } catch {
-        // queue table optional during prototype
-      }
-    } else {
-      refreshPersonalEvents();
-    }
   }, [editingEventId, eventDraft, roleByOrg, sessionUserId, refreshPersonalEvents, refreshRemoteEvents]);
 
   const upcomingEventsByDay = useMemo(() => {
@@ -638,7 +901,7 @@ export default function Calender() {
   }, [events, weekStart]);
 
   const weekEventLayouts = useMemo(() => {
-    const layouts: { event: CalendarEvent; dayIndex: number; top: number; height: number }[] = [];
+    const layouts: { event: CalendarEvent; dayIndex: number; top: number; height: number; durationMinutes: number }[] = [];
     eventsThisWeek.forEach((evt) => {
       const startDate = new Date(evt.start);
       const endDate = new Date(evt.end);
@@ -649,13 +912,20 @@ export default function Calender() {
       const endMinutes = Math.max(endMinutesRaw, startMinutes + 15);
       const clampedStart = Math.max(0, Math.min(startMinutes, 24 * 60));
       const clampedEnd = Math.max(clampedStart + 15, Math.min(endMinutes, 24 * 60));
+      const durationMinutes = clampedEnd - clampedStart;
       const durationHours = (clampedEnd - clampedStart) / 60;
       layouts.push({
         event: evt,
         dayIndex,
         top: (clampedStart / 60) * hourHeight,
         height: durationHours * hourHeight,
+        durationMinutes,
       });
+    });
+    layouts.sort((a, b) => {
+      if (b.durationMinutes !== a.durationMinutes) return b.durationMinutes - a.durationMinutes;
+      if (a.dayIndex !== b.dayIndex) return a.dayIndex - b.dayIndex;
+      return a.top - b.top;
     });
     return layouts;
   }, [eventsThisWeek, weekDays, hourHeight]);
@@ -924,7 +1194,7 @@ export default function Calender() {
             {!!eventDetail?.description && (
               <Text style={styles.eventDetailDescription}>{eventDetail.description}</Text>
             )}
-            {eventDetail && (eventDetail.scope === 'self' || (eventDetail.scope === 'org' && eventDetail.orgId && roleByOrg[eventDetail.orgId] === 'director')) && (
+            {eventDetail && !eventDetail.readOnly && (eventDetail.scope === 'self' || (eventDetail.scope === 'org' && eventDetail.orgId && roleByOrg[eventDetail.orgId] === 'director')) && (
               <View style={{ flexDirection: 'row', marginTop: 12 }}>
 
                 <TouchableOpacity
@@ -1095,7 +1365,7 @@ export default function Calender() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0a1c27',
+    backgroundColor: '#112a37',
   },
   container: {
     flex: 1,
@@ -1573,6 +1843,7 @@ const styles = StyleSheet.create({
     
   },
 }); 
+
 
 
 
