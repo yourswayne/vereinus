@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUsingFallback } from '../lib/supabase';
 
 // --- Types ---
 type Priority = 'low' | 'medium' | 'high';
@@ -44,8 +44,59 @@ type TaskList = {
   archived: Task[];
 };
 
+const normalizeIdsToUuid = (input: TaskList[]) => {
+  let changed = false;
+  const listIdMap = new Map<string, string>();
+
+  const normalizeTask = (task: Task, forceDone?: boolean) => {
+    let id = task.id;
+    if (!isUuid(id)) {
+      const nextId = uid();
+      id = nextId;
+      changed = true;
+    }
+    return { ...task, id, done: forceDone ?? task.done };
+  };
+
+  const lists = input.map((list) => {
+    let listId = list.id;
+    if (!isUuid(listId)) {
+      const nextId = uid();
+      listIdMap.set(listId, nextId);
+      listId = nextId;
+      changed = true;
+    }
+    return {
+      ...list,
+      id: listId,
+      tasks: (list.tasks ?? []).map((t) => normalizeTask(t, false)),
+      archived: (list.archived ?? []).map((t) => normalizeTask(t, true)),
+    };
+  });
+
+  return { lists, changed, listIdMap };
+};
+
 // --- Helpers ---
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  const r = Math.random() * 16 | 0;
+  const v = c === 'x' ? r : (r & 0x3 | 0x8);
+  return v.toString(16);
+});
+const isUuid = (value?: string) => !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
+const getErrorMessage = (error: any, fallback: string) => {
+  const message = String(error?.message ?? '').trim();
+  return message || fallback;
+};
+
+const isMissingColumnError = (error: any, column: string) => {
+  const msg = String(error?.message ?? '').toLowerCase();
+  return msg.includes('column') && msg.includes(column.toLowerCase()) && msg.includes('does not exist');
+};
+
+const withContext = (context: string, error: any, fallback: string) =>
+  `${context}: ${getErrorMessage(error, fallback)}`;
 
 const getDurationMinutes = (start?: string, end?: string) => {
   if (!start || !end) return undefined;
@@ -455,6 +506,8 @@ const DateRangeInputs = ({
 export default function Tasklist() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const basePaddingTop = (Platform.select({ ios: 28, android: 20, default: 16 }) ?? 16) + 8;
+  const containerPaddingTop = Math.max(insets.top + 12, basePaddingTop);
   const [currentSessionUserId, setCurrentSessionUserId] = useState<string | null>(null);
   // Start without default lists so the create-list flow
   // can enforce first-time creation when empty
@@ -477,11 +530,24 @@ export default function Tasklist() {
   const [addListName, setAddListName] = useState('');
   type StatusFilter = 'all' | 'upcoming' | 'overdue' | 'done';
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  type SyncDebugState = {
+    lastError?: string;
+    lastSyncAt?: string;
+    remoteListCount?: number;
+    remoteTaskCount?: number;
+  };
+  const syncDebugRef = useRef<SyncDebugState>({});
+  const setSyncDebug = useCallback((updater: ((prev: SyncDebugState) => SyncDebugState) | SyncDebugState) => {
+    syncDebugRef.current = typeof updater === 'function' ? updater(syncDebugRef.current) : updater;
+  }, []);
 
   const currentList = useMemo(() => lists.find((l) => l.id === selectedListId), [lists, selectedListId]);
 
   // Persistence
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevListsRef = useRef<TaskList[]>([]);
+  const listSchemaRef = useRef<{ hasKind?: boolean }>({});
   const STORAGE_KEY = '@vereinus/tasklists';
   const STORAGE_SEL = '@vereinus/selectedListId';
   const storageKey = useMemo(
@@ -494,36 +560,222 @@ export default function Tasklist() {
   );
   const lastSelectedIdRef = useRef<string | undefined>(undefined);
 
-  const loadRemoteState = useCallback(async (userId: string) => {
+  const loadRemoteLists = useCallback(async (userId: string) => {
+    const syncAt = new Date().toISOString();
+    setSyncDebug((prev) => ({ ...prev, lastSyncAt: syncAt, lastError: undefined }));
     try {
-      const table: any = supabase?.from?.('tasklist_state');
-      if (!table || typeof table.select !== 'function') return null;
-      const query: any = table
-        .select('data, selected_list_id')
-        .eq('user_id', userId);
-      const res = query?.maybeSingle
-        ? await query.maybeSingle()
-        : await query.single?.();
-      const data = (res as any)?.data;
-      const error = (res as any)?.error;
-      if (error || !data) return null;
-      return data as { data: TaskList[]; selected_list_id?: string | null };
+      const listTable: any = supabase?.from?.('task_lists');
+      if (!listTable || typeof listTable.select !== 'function') {
+        setSyncDebug((prev) => ({ ...prev, lastError: withContext('load task_lists', null, 'supabase client unavailable') }));
+        return null;
+      }
+      const listRes = await listTable.select('*').eq('user_id', userId);
+      const listRows = (listRes as any)?.data;
+      const listError = (listRes as any)?.error;
+      if (listError || !Array.isArray(listRows)) {
+        setSyncDebug((prev) => ({ ...prev, lastError: withContext('load task_lists', listError, 'remote list load failed') }));
+        return null;
+      }
+      if (listSchemaRef.current.hasKind === undefined && listRows.length) {
+        listSchemaRef.current.hasKind = Object.prototype.hasOwnProperty.call(listRows[0], 'kind');
+      }
+      const filteredListRows = listRows.filter((row: any) => !row?.kind || row.kind === 'user');
+      if (!filteredListRows.length) {
+        setSyncDebug((prev) => ({
+          ...prev,
+          lastSyncAt: syncAt,
+          lastError: undefined,
+          remoteListCount: 0,
+          remoteTaskCount: 0,
+        }));
+        return { lists: [] as TaskList[] };
+      }
+
+      const listIds = filteredListRows.map((row: any) => row.id);
+      const taskTable: any = supabase?.from?.('tasks');
+      if (!taskTable || typeof taskTable.select !== 'function') {
+        setSyncDebug((prev) => ({ ...prev, lastError: withContext('load tasks', null, 'supabase tasks table unavailable') }));
+        return { lists: [] as TaskList[] };
+      }
+      const taskRes = await taskTable
+        .select('*')
+        .in('list_id', listIds);
+      const taskRows = (taskRes as any)?.data ?? [];
+      const taskError = (taskRes as any)?.error;
+      if (taskError) {
+        setSyncDebug((prev) => ({ ...prev, lastError: withContext('load tasks', taskError, 'remote task load failed') }));
+        return { lists: [] as TaskList[] };
+      }
+
+      const map = new Map<string, TaskList>();
+      filteredListRows.forEach((row: any) => {
+        map.set(row.id, {
+          id: row.id,
+          name: row.name ?? 'Liste',
+          tasks: [],
+          archived: [],
+        });
+      });
+
+      const toTask = (row: any): Task => {
+        const startAt = row.start_at ? toDateTimeString(new Date(row.start_at)) : undefined;
+        const endAt = row.due_at ? toDateTimeString(new Date(row.due_at)) : undefined;
+        const createdAt = row.created_at ? toDateTimeString(new Date(row.created_at)) : toDateTimeString(new Date());
+        return {
+          id: row.id,
+          title: row.title ?? '',
+          description: row.description ?? undefined,
+          priority: row.priority ?? undefined,
+          startAt,
+          endAt,
+          done: !!row.done,
+          subtasks: [],
+          createdAt,
+        };
+      };
+
+      taskRows.forEach((row: any) => {
+        const list = map.get(row.list_id);
+        if (!list) return;
+        const task = toTask(row);
+        if (task.done) list.archived.push(task);
+        else list.tasks.push(task);
+      });
+
+      setSyncDebug((prev) => ({
+        ...prev,
+        lastSyncAt: syncAt,
+        lastError: undefined,
+        remoteListCount: filteredListRows.length,
+        remoteTaskCount: taskRows.length,
+      }));
+      return { lists: Array.from(map.values()) };
     } catch {
+      setSyncDebug((prev) => ({ ...prev, lastError: withContext('load remote', null, 'remote load failed') }));
       return null;
     }
   }, []);
 
-  const saveRemoteState = useCallback(async (userId: string, payload: { data: TaskList[]; selected_list_id?: string | null }) => {
+  const syncRemoteLists = useCallback(async (userId: string, prevLists: TaskList[], nextLists: TaskList[]) => {
+    const syncAt = new Date().toISOString();
+    setSyncDebug((prev) => ({ ...prev, lastSyncAt: syncAt, lastError: undefined }));
     try {
-      const table: any = supabase?.from?.('tasklist_state');
-      if (!table || typeof table.upsert !== 'function') return;
-      await table.upsert({
+      const listTable: any = supabase?.from?.('task_lists');
+      const taskTable: any = supabase?.from?.('tasks');
+      if (!listTable || !taskTable) {
+        setSyncDebug((prev) => ({ ...prev, lastError: withContext('sync', null, 'supabase client unavailable') }));
+        return;
+      }
+
+      const prevListById = new Map(prevLists.map((l) => [l.id, l]));
+      const prevListIds = new Set(prevLists.map((l) => l.id));
+      const nextListIds = new Set(nextLists.map((l) => l.id));
+      const removedListIds = Array.from(prevListIds).filter((id) => !nextListIds.has(id));
+      const changedListIds = new Set(nextLists.filter((l) => prevListById.get(l.id) !== l).map((l) => l.id));
+      const listsToUpsert = nextLists.filter((l) => {
+        const prev = prevListById.get(l.id);
+        return !prev || prev.name !== l.name;
+      });
+
+      if (!changedListIds.size && !removedListIds.length) {
+        return;
+      }
+
+      const buildListRows = (includeKind: boolean) => listsToUpsert.map((l) => ({
+        id: l.id,
+        name: l.name,
         user_id: userId,
-        data: payload.data,
-        selected_list_id: payload.selected_list_id ?? null,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' });
+        ...(includeKind ? { kind: 'user' } : {}),
+      }));
+      let includeKind = listSchemaRef.current.hasKind !== false;
+      let listRows = buildListRows(includeKind);
+      if (listRows.length) {
+        let listRes = await listTable.upsert(listRows, { onConflict: 'id', returning: 'minimal' });
+        if (listRes?.error && includeKind && isMissingColumnError(listRes.error, 'kind')) {
+          listSchemaRef.current.hasKind = false;
+          includeKind = false;
+          listRows = buildListRows(false);
+          listRes = await listTable.upsert(listRows, { onConflict: 'id', returning: 'minimal' });
+        }
+        if (listRes?.error) {
+          setSyncDebug((prev) => ({ ...prev, lastError: withContext('upsert task_lists', listRes.error, 'list sync failed') }));
+          return;
+        }
+      }
+
+      const toTaskRow = (task: Task, listId: string, forceDone?: boolean) => {
+        const start = task.startAt ? parseDateTime(task.startAt) : undefined;
+        const end = task.endAt ? parseDateTime(task.endAt) : undefined;
+        const created = task.createdAt ? parseDateTime(task.createdAt) : undefined;
+        const createdAtIso = created ? created.toISOString() : new Date().toISOString();
+        return {
+          id: task.id,
+          list_id: listId,
+          title: task.title,
+          description: task.description ?? null,
+          priority: task.priority ?? null,
+          start_at: start ? start.toISOString() : null,
+          due_at: end ? end.toISOString() : null,
+          done: forceDone ?? !!task.done,
+          created_at: createdAtIso,
+        };
+      };
+
+      const nextAllTaskIds = new Set(nextLists.flatMap((l) => [
+        ...(l.tasks ?? []).map((t) => t.id),
+        ...(l.archived ?? []).map((t) => t.id),
+      ]));
+      const nextTaskRows = nextLists.flatMap((l) => (
+        changedListIds.has(l.id)
+          ? [
+              ...(l.tasks ?? []).map((t) => toTaskRow(t, l.id, false)),
+              ...(l.archived ?? []).map((t) => toTaskRow(t, l.id, true)),
+            ]
+          : []
+      ));
+      if (nextTaskRows.length) {
+        const taskRes = await taskTable.upsert(nextTaskRows, { onConflict: 'id', returning: 'minimal' });
+        if (taskRes?.error) {
+          setSyncDebug((prev) => ({ ...prev, lastError: withContext('upsert tasks', taskRes.error, 'task sync failed') }));
+          return;
+        }
+      }
+
+      if (removedListIds.length) {
+        const delTasksRes = await taskTable.delete().in('list_id', removedListIds);
+        if (delTasksRes?.error) {
+          setSyncDebug((prev) => ({ ...prev, lastError: withContext('delete tasks by list_id', delTasksRes.error, 'task delete failed') }));
+          return;
+        }
+        const delListsRes = await listTable.delete().in('id', removedListIds);
+        if (delListsRes?.error) {
+          setSyncDebug((prev) => ({ ...prev, lastError: withContext('delete task_lists', delListsRes.error, 'list delete failed') }));
+          return;
+        }
+      }
+
+      const prevTaskIds = new Set(prevLists.flatMap((l) => [
+        ...(l.tasks ?? []).map((t) => t.id),
+        ...(l.archived ?? []).map((t) => t.id),
+      ]));
+      const removedTaskIds = Array.from(prevTaskIds).filter((id) => !nextAllTaskIds.has(id));
+      if (removedTaskIds.length) {
+        const delTaskRes = await taskTable.delete().in('id', removedTaskIds);
+        if (delTaskRes?.error) {
+          setSyncDebug((prev) => ({ ...prev, lastError: withContext('delete tasks by id', delTaskRes.error, 'task delete failed') }));
+          return;
+        }
+      }
+
+      setSyncDebug((prev) => ({
+        ...prev,
+        lastSyncAt: syncAt,
+        lastError: undefined,
+        remoteListCount: nextLists.length,
+        remoteTaskCount: nextAllTaskIds.size,
+      }));
     } catch {
+      setSyncDebug((prev) => ({ ...prev, lastError: withContext('sync', null, 'remote sync failed') }));
       // ignore remote write errors to avoid breaking offline mode
     }
   }, []);
@@ -550,20 +802,31 @@ export default function Tasklist() {
     (async () => {
       try {
         const [rawLists, rawSel] = await Promise.all([AsyncStorage.getItem(storageKey), AsyncStorage.getItem(storageSelKey)]);
+        let localLists: TaskList[] = [];
+        let localSelected = rawSel ?? undefined;
         if (rawLists) {
           const parsed: TaskList[] = JSON.parse(rawLists);
-          setLists(parsed);
-          if (rawSel) setSelectedListId(rawSel);
-          else if (parsed[0]) setSelectedListId(parsed[0].id);
+          const normalized = normalizeIdsToUuid(parsed);
+          localLists = normalized.lists;
+          if (localSelected && normalized.listIdMap.has(localSelected)) {
+            localSelected = normalized.listIdMap.get(localSelected);
+          }
+          setLists(localLists);
+          if (localSelected) setSelectedListId(localSelected);
+          else if (localLists[0]) setSelectedListId(localLists[0].id);
         } else {
           setLists([]);
           setSelectedListId(undefined);
         }
-        if (currentSessionUserId) {
-          const remote = await loadRemoteState(currentSessionUserId);
-          if (remote?.data) {
-            setLists(remote.data);
-            setSelectedListId(remote.selected_list_id ?? remote.data[0]?.id);
+        if (currentSessionUserId && !supabaseUsingFallback) {
+          const remote = await loadRemoteLists(currentSessionUserId);
+          if (remote?.lists && remote.lists.length) {
+            const remoteSelected = localSelected && remote.lists.some((l) => l.id === localSelected)
+              ? localSelected
+              : remote.lists[0]?.id;
+            setLists(remote.lists);
+            setSelectedListId(remoteSelected);
+            prevListsRef.current = remote.lists;
           }
         }
       } catch {
@@ -571,7 +834,7 @@ export default function Tasklist() {
         setSelectedListId(undefined);
       }
     })();
-  }, [storageKey, storageSelKey, currentSessionUserId, loadRemoteState]);
+  }, [storageKey, storageSelKey, currentSessionUserId, loadRemoteLists, supabaseUsingFallback]);
 
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -579,14 +842,26 @@ export default function Tasklist() {
       AsyncStorage.setItem(storageKey, JSON.stringify(lists)).catch(() => { });
       if (selectedListId) AsyncStorage.setItem(storageSelKey, selectedListId).catch(() => { });
       else AsyncStorage.removeItem(storageSelKey).catch(() => { });
-      if (currentSessionUserId) {
-        saveRemoteState(currentSessionUserId, { data: lists, selected_list_id: selectedListId ?? null });
-      }
     }, 200);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [lists, selectedListId, storageKey, storageSelKey, currentSessionUserId, saveRemoteState]);
+  }, [lists, selectedListId, storageKey, storageSelKey]);
+
+  useEffect(() => {
+    if (!currentSessionUserId || supabaseUsingFallback) return;
+    if (remoteSyncTimer.current) clearTimeout(remoteSyncTimer.current);
+    const prev = prevListsRef.current;
+    const next = lists;
+    remoteSyncTimer.current = setTimeout(() => {
+      syncRemoteLists(currentSessionUserId, prev, next).finally(() => {
+        prevListsRef.current = next;
+      });
+    }, 400);
+    return () => {
+      if (remoteSyncTimer.current) clearTimeout(remoteSyncTimer.current);
+    };
+  }, [lists, currentSessionUserId, syncRemoteLists, supabaseUsingFallback]);
   // Remove one-time gating: focus effect controls showing the add-list popup
 
   // Intercept special dropdown selection to add new list
@@ -871,7 +1146,7 @@ export default function Tasklist() {
   }, [renderTaskItem, renderArchivedItem, statusFilter]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: containerPaddingTop }]}>
       <Text style={styles.h1}>Aufgaben</Text>
 
       <View style={[styles.row, styles.headerRow]}>
