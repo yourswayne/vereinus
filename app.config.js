@@ -37,12 +37,37 @@ for (const p of CANDIDATES) {
   if (existsSync(p)) { loadEnvFile(p); break; }
 }
 
-module.exports = ({ config }) => ({
-  ...config,
-  extra: {
-    ...(config.extra || {}),
-    // Hardcoded for now as requested
-    EXPO_PUBLIC_SUPABASE_URL: 'https://jeruntnmpdiijlqkfpfr.supabase.co',
-    EXPO_PUBLIC_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplcnVudG5tcGRpaWpscWtmcGZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1MjAyOTUsImV4cCI6MjA3NjA5NjI5NX0.6s-8etdG2YALLnnq7ob8W0bw7sZj3_LsOU2UWXr4MyE',
-  },
-});
+module.exports = ({ config }) => {
+  const plugins = Array.isArray(config.plugins) ? [...config.plugins] : [];
+  const hasImagePicker = plugins.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-image-picker');
+  if (!hasImagePicker) {
+    plugins.push([
+      'expo-image-picker',
+      {
+        photosPermission: 'Allow access to your photos.',
+        cameraPermission: 'Allow access to your camera.',
+        microphonePermission: 'Allow access to your microphone.',
+      },
+    ]);
+  }
+
+  return {
+    ...config,
+    ios: {
+      ...(config.ios || {}),
+      infoPlist: {
+        ...((config.ios && config.ios.infoPlist) || {}),
+        NSCameraUsageDescription: 'Allow access to your camera.',
+        NSPhotoLibraryUsageDescription: 'Allow access to your photos.',
+        NSMicrophoneUsageDescription: 'Allow access to your microphone.',
+      },
+    },
+    plugins,
+    extra: {
+      ...(config.extra || {}),
+      // Hardcoded for now as requested
+      EXPO_PUBLIC_SUPABASE_URL: 'https://jeruntnmpdiijlqkfpfr.supabase.co',
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplcnVudG5tcGRpaWpscWtmcGZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1MjAyOTUsImV4cCI6MjA3NjA5NjI5NX0.6s-8etdG2YALLnnq7ob8W0bw7sZj3_LsOU2UWXr4MyE',
+    },
+  };
+};
