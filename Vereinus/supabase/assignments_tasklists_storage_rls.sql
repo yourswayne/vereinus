@@ -387,11 +387,31 @@ BEGIN
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage'
       AND tablename = 'objects'
+      AND policyname = 'assignment_attachments_select'
+  ) THEN
+    CREATE POLICY assignment_attachments_select
+      ON storage.objects
+      FOR SELECT
+      USING (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY assignment_attachments_select
+      ON storage.objects
+      USING (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
       AND policyname = 'assignment_attachments_insert'
   ) THEN
     CREATE POLICY assignment_attachments_insert
       ON storage.objects
       FOR INSERT
+      WITH CHECK (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY assignment_attachments_insert
+      ON storage.objects
       WITH CHECK (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
   END IF;
 
@@ -405,6 +425,10 @@ BEGIN
       ON storage.objects
       FOR UPDATE
       USING (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY assignment_attachments_update
+      ON storage.objects
+      USING (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
   END IF;
 
   IF NOT EXISTS (
@@ -417,6 +441,83 @@ BEGIN
       ON storage.objects
       FOR DELETE
       USING (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY assignment_attachments_delete
+      ON storage.objects
+      USING (bucket_id = 'assignment-attachments' AND auth.role() = 'authenticated');
+  END IF;
+END
+$$;
+
+-- Storage bucket for chat media (public)
+insert into storage.buckets (id, name, public)
+values ('chat-media', 'chat-media', true)
+on conflict (id) do nothing;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'chat_media_select'
+  ) THEN
+    CREATE POLICY chat_media_select
+      ON storage.objects
+      FOR SELECT
+      USING (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY chat_media_select
+      ON storage.objects
+      USING (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'chat_media_insert'
+  ) THEN
+    CREATE POLICY chat_media_insert
+      ON storage.objects
+      FOR INSERT
+      WITH CHECK (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY chat_media_insert
+      ON storage.objects
+      WITH CHECK (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'chat_media_update'
+  ) THEN
+    CREATE POLICY chat_media_update
+      ON storage.objects
+      FOR UPDATE
+      USING (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY chat_media_update
+      ON storage.objects
+      USING (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage'
+      AND tablename = 'objects'
+      AND policyname = 'chat_media_delete'
+  ) THEN
+    CREATE POLICY chat_media_delete
+      ON storage.objects
+      FOR DELETE
+      USING (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
+  ELSE
+    ALTER POLICY chat_media_delete
+      ON storage.objects
+      USING (bucket_id = 'chat-media' AND auth.role() = 'authenticated');
   END IF;
 END
 $$;

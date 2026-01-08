@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase, supabaseUsingFallback } from '../lib/supabase';
 
 // --- Types ---
@@ -512,6 +513,7 @@ export default function Tasklist() {
   // Start without default lists so the create-list flow
   // can enforce first-time creation when empty
   const [lists, setLists] = useState<TaskList[]>([]);
+  const [listsLoaded, setListsLoaded] = useState(false);
   const [selectedListId, setSelectedListId] = useState<string | undefined>(undefined);
 
   // Draft editing
@@ -799,6 +801,7 @@ export default function Tasklist() {
     setLists([]);
     setSelectedListId(undefined);
     lastSelectedIdRef.current = undefined;
+    setListsLoaded(false);
     (async () => {
       try {
         const [rawLists, rawSel] = await Promise.all([AsyncStorage.getItem(storageKey), AsyncStorage.getItem(storageSelKey)]);
@@ -832,9 +835,23 @@ export default function Tasklist() {
       } catch {
         setLists([]);
         setSelectedListId(undefined);
+      } finally {
+        setListsLoaded(true);
       }
     })();
   }, [storageKey, storageSelKey, currentSessionUserId, loadRemoteLists, supabaseUsingFallback]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!listsLoaded) return;
+      if (lists.length === 0) {
+        setShowAddList(true);
+      }
+      return () => {
+        setShowAddList(false);
+      };
+    }, [listsLoaded, lists.length]),
+  );
 
   useEffect(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
