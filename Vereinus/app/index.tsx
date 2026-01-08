@@ -12,6 +12,7 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import type { VideoViewProps } from 'expo-video';
 
@@ -82,7 +83,7 @@ type AssignmentSubmission = {
 };
 type ChatMedia = {
   url: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'file';
   name?: string | null;
 };
 type ChatMessage = {
@@ -94,15 +95,23 @@ type ChatMessage = {
   userId: string | null;
   senderName?: string | null;
   mediaUrl?: string | null;
-  mediaType?: 'image' | 'video' | null;
+  mediaType?: 'image' | 'video' | 'file' | null;
   mediaName?: string | null;
+  mediaItems?: ChatMedia[] | null;
 };
 type PendingChatMedia = {
   uri: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'file';
   name?: string | null;
   mimeType?: string | null;
 };
+type PendingUpload = {
+  uri: string;
+  kind: 'image' | 'video' | 'file';
+  name?: string | null;
+  mimeType?: string | null;
+};
+type MediaPickerTarget = 'chat' | 'exercise' | 'assignment' | 'submission';
 
 type InlineVideoProps = {
   uri: string;
@@ -144,7 +153,7 @@ export default function Home() {
   const [messageUserNames, setMessageUserNames] = useState<Record<string, string>>({});
   const messageUserNamesRef = useRef<Record<string, string>>({});
   const [draft, setDraft] = useState('');
-  const [pendingChatMedia, setPendingChatMedia] = useState<PendingChatMedia | null>(null);
+  const [pendingChatMedia, setPendingChatMedia] = useState<PendingChatMedia[]>([]);
   const [chatUploadBusy, setChatUploadBusy] = useState(false);
   const [chatMediaUrlCache, setChatMediaUrlCache] = useState<Record<string, string>>({});
   const chatMediaUrlCacheRef = useRef<Record<string, string>>({});
@@ -238,7 +247,7 @@ export default function Home() {
   const [renameOrgName, setRenameOrgName] = useState('');
   const [showManageMembers, setShowManageMembers] = useState(false);
   const [manageMembersOrg, setManageMembersOrg] = useState<{ id: string; name: string } | null>(null);
-  // --- Uebungen ---
+  // --- Übungen ---
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   const [showAddExercise, setShowAddExercise] = useState(false);
@@ -251,6 +260,8 @@ export default function Home() {
   const [descriptionStyle, setDescriptionStyle] = useState<RichTextStyle>({});
   const [attachments, setAttachments] = useState<ExerciseAttachment[]>([]);
   const [showMediaModal, setShowMediaModal] = useState(false);
+  const [mediaPickerTarget, setMediaPickerTarget] = useState<MediaPickerTarget | null>(null);
+  const [mediaUploadBusy, setMediaUploadBusy] = useState(false);
   const [newMediaUrl, setNewMediaUrl] = useState('');
   const [newMediaType, setNewMediaType] = useState<'image' | 'video' | 'file'>('image');
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([]);
@@ -265,10 +276,10 @@ export default function Home() {
   const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(null);
   const [assignmentTitle, setAssignmentTitle] = useState('');
   const [assignmentDescription, setAssignmentDescription] = useState('');
-  const [assignmentAttachment, setAssignmentAttachment] = useState('');
+  const [assignmentAttachments, setAssignmentAttachments] = useState<string[]>([]);
   const [assignmentGroupId, setAssignmentGroupId] = useState<string | null>(null);
   const [submissionNote, setSubmissionNote] = useState('');
-  const [submissionAttachment, setSubmissionAttachment] = useState('');
+  const [submissionAttachments, setSubmissionAttachments] = useState<string[]>([]);
   const groupsReqRef = useRef(0);
 
   const currentOrg = useMemo(() => orgs.find((o) => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
@@ -284,6 +295,7 @@ export default function Home() {
   const EXERCISE_STORAGE_BASE = '@vereinus/exercises';
   const SEEN_STORAGE_BASE = '@vereinus/seen';
   const CHAT_MEDIA_BUCKET = 'chat-media';
+  const ATTACHMENTS_BUCKET = 'assignment-attachments';
   const exerciseStorageKey = useMemo(
     () => `${EXERCISE_STORAGE_BASE}:${selectedOrgId ?? 'default'}`,
     [selectedOrgId],
@@ -335,6 +347,8 @@ export default function Home() {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+  const isUuid = (value?: string | null) =>
+    !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
   const mergeById = <T extends { id: string }>(local: T[], remote: T[]) => {
     const map = new Map<string, T>();
     remote.forEach((item) => {
@@ -447,6 +461,12 @@ export default function Home() {
   }, [buildProfileDisplayName, fetchProfilesByIds, myMemberEntry?.displayName, sessionUserId]);
   const buildChatMessage = (row: { id: string; user_id: string | null; body: string | null; created_at: string }) => {
     const parsed = parseChatBody(row.body);
+    const mediaItems = parsed.mediaItems?.length
+      ? parsed.mediaItems
+      : parsed.media
+        ? [parsed.media]
+        : [];
+    const firstMedia = mediaItems[0] ?? null;
     return {
       id: row.id,
       text: parsed.text,
@@ -455,9 +475,10 @@ export default function Home() {
       createdAt: row.created_at,
       userId: row.user_id ?? null,
       senderName: parsed.senderName ?? null,
-      mediaUrl: parsed.media?.url ?? null,
-      mediaType: parsed.media?.type ?? null,
-      mediaName: parsed.media?.name ?? null,
+      mediaUrl: firstMedia?.url ?? null,
+      mediaType: firstMedia?.type ?? null,
+      mediaName: firstMedia?.name ?? null,
+      mediaItems: mediaItems.length ? mediaItems : null,
     } as ChatMessage;
   };
 
@@ -473,7 +494,10 @@ export default function Home() {
   useEffect(() => {
     if (supabaseUsingFallback || !supabaseUrl || !(supabase as any).storage) return;
     const pending = messages
-      .map((m) => m.mediaUrl)
+      .flatMap((m) => {
+        if (m.mediaItems?.length) return m.mediaItems.map((item) => item.url).filter(Boolean);
+        return m.mediaUrl ? [m.mediaUrl] : [];
+      })
       .filter((url): url is string => !!url)
       .filter((url) => !chatMediaUrlCacheRef.current[url]);
     if (!pending.length) return;
@@ -585,21 +609,41 @@ export default function Home() {
   };
 
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(exerciseStorageKey);
-        if (!alive) return;
-        if (raw) setExercises(JSON.parse(raw));
-        else setExercises([]);
-      } catch {
-        if (alive) setExercises([]);
-      }
-    })();
-    return () => { alive = false; };
-  }, [exerciseStorageKey]);
+      let alive = true;
+      (async () => {
+        let localExercises: Exercise[] = [];
+        try {
+          const raw = await AsyncStorage.getItem(exerciseStorageKey);
+          localExercises = raw ? JSON.parse(raw) : [];
+        } catch {
+          localExercises = [];
+        }
 
-  useEffect(() => {
+        if (!alive) return;
+        setExercises(localExercises);
+
+        if (supabaseUsingFallback || !selectedOrgId || !sessionUserId) return;
+
+        try {
+          const { data, error } = await supabase
+            .from('exercises')
+            .select('id, org_id, group_id, title, description, attachments, text_styles, created_at, updated_at')
+            .eq('org_id', selectedOrgId)
+            .order('created_at', { ascending: false });
+          if (error) throw error;
+          const remoteExercises = (data ?? []).map((row: any) => mapExerciseRow(row));
+          if (!alive) return;
+          const merged = sortExercises(mergeById(localExercises, remoteExercises));
+          setExercises(merged);
+          AsyncStorage.setItem(exerciseStorageKey, JSON.stringify(merged)).catch(() => { });
+        } catch {
+          // keep local cache on remote load errors
+        }
+      })();
+      return () => { alive = false; };
+    }, [exerciseStorageKey, selectedOrgId, sessionUserId, supabaseUsingFallback]);
+
+    useEffect(() => {
     AsyncStorage.setItem(exerciseStorageKey, JSON.stringify(exercises)).catch(() => { });
   }, [exercises, exerciseStorageKey]);
 
@@ -776,18 +820,21 @@ export default function Home() {
     setNewMediaUrl('');
     setNewMediaType('image');
     setShowMediaModal(false);
+    setMediaPickerTarget(null);
   };
 
   const closeAddExerciseModal = () => {
     setShowMediaModal(false);
+    setMediaPickerTarget(null);
     setShowAddExercise(false);
   };
 
   useEffect(() => {
-    if (!showAddExercise && showMediaModal) {
+    if (!showAddExercise && showMediaModal && mediaPickerTarget === 'exercise') {
       setShowMediaModal(false);
+      setMediaPickerTarget(null);
     }
-  }, [showAddExercise, showMediaModal]);
+  }, [showAddExercise, showMediaModal, mediaPickerTarget]);
 
   const openAddExercise = () => {
     resetExerciseForm();
@@ -795,6 +842,7 @@ export default function Home() {
   };
 
   const addAttachmentFromModal = () => {
+    if (mediaPickerTarget !== 'exercise') return;
     const url = newMediaUrl.trim();
     if (!url) return;
     setAttachments((prev) => [{ id: uid(), type: newMediaType, url }, ...prev]);
@@ -806,101 +854,152 @@ export default function Home() {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
-  const pickFromLibrary = async () => {
-    try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien hinzuzufügen.');
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
-        allowsMultipleSelection: true,
-        quality: 0.7,
-      });
-      if (result.canceled) return;
-      const picked = (result.assets ?? []).map((asset) => ({
-        id: uid(),
-        type: asset.type === 'video' ? 'video' as const : 'image' as const,
-        url: asset.uri,
-      }));
-      if (picked.length) setAttachments((prev) => [...picked, ...prev]);
-    } catch {
-      Alert.alert('Fehler', 'Medien konnten nicht geladen werden.');
-    }
+  const renderAttachmentChip = (att: ExerciseAttachment) => {
+    const label = fileLabelFromUrl(att.url, att.name ?? undefined);
+    const youtubeThumb = att.type === 'video' ? getYouTubeThumb(att.url) : null;
+    const thumb = att.type === 'image'
+      ? (
+        <Image source={{ uri: att.url }} style={styles.attachmentThumbImage} resizeMode="cover" />
+      )
+      : att.type === 'video'
+        ? (
+          <View style={styles.attachmentThumbImage}>
+            {youtubeThumb ? (
+              <Image source={{ uri: youtubeThumb }} style={styles.attachmentThumbVideo} resizeMode="cover" />
+            ) : (
+              <InlineVideo
+                uri={att.url}
+                style={styles.attachmentThumbVideo}
+                contentFit="cover"
+                nativeControls={false}
+              />
+            )}
+            <View style={styles.attachmentThumbOverlay}>
+              <Ionicons name="play" size={18} color="#E5F4EF" />
+            </View>
+          </View>
+        )
+        : (
+          <View style={[styles.attachmentThumbImage, styles.attachmentThumbFile]}>
+            <Ionicons name="document-text-outline" size={20} color="#9FE1C7" />
+          </View>
+        );
+
+    return (
+      <View key={att.id} style={styles.attachmentPreviewCard}>
+        <TouchableOpacity
+          style={styles.attachmentThumb}
+          activeOpacity={0.85}
+          onPress={() => openDocument(att.url)}
+        >
+          {thumb}
+        </TouchableOpacity>
+        <Text style={styles.attachmentText} numberOfLines={1}>{label}</Text>
+        <TouchableOpacity onPress={() => removeAttachment(att.id)} style={styles.attachmentRemove}>
+          <Ionicons name="close" size={16} color="#E5F4EF" />
+        </TouchableOpacity>
+      </View>
+    );
   };
 
-  const pickDocument = async () => {
-    try {
-      const res = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
-      if (res.type === 'cancel') return;
-      const assets = 'assets' in res && Array.isArray((res as any).assets) ? (res as any).assets : [res];
-      const picked = (assets ?? []).map((asset: any) => ({
-        id: uid(),
-        type: 'file' as const,
-        url: asset.uri,
-        name: asset.name ?? null,
-      }));
-      if (picked.length) setAttachments((prev) => [...picked, ...prev]);
-    } catch {
-      Alert.alert('Fehler', 'Datei konnte nicht geladen werden.');
-    }
-  };
-
-  const handleAttachmentButton = () => {
+  const openMediaPicker = (target: MediaPickerTarget) => {
+    setMediaPickerTarget(target);
     setShowMediaModal(true);
-    // Direkt Galerie öffnen, damit sofort etwas passiert; Modal bleibt für Links/Dateien offen.
-    pickFromLibrary().catch(() => { });
   };
-  const pickChatMedia = async () => {
-    try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos, um Medien zu senden.');
-        return;
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
-        allowsMultipleSelection: false,
-        quality: 0.8,
-      });
-      if (result.canceled) return;
-      const asset = result.assets?.[0];
-      if (!asset) return;
-      setPendingChatMedia({
-        uri: asset.uri,
-        type: asset.type === 'video' ? 'video' : 'image',
-        name: asset.fileName ?? null,
-        mimeType: asset.mimeType ?? null,
-      });
-    } catch {
-      Alert.alert('Fehler', 'Medien konnten nicht geladen werden.');
+
+  const closeMediaPicker = () => {
+    setShowMediaModal(false);
+    setMediaPickerTarget(null);
+    setNewMediaUrl('');
+  };
+
+  const getFileExtension = (name?: string | null, uri?: string | null) => {
+    const raw = (name ?? uri ?? '').split('?')[0].split('#')[0];
+    const parts = raw.split('.');
+    if (parts.length < 2) return '';
+    return parts.pop()?.toLowerCase() ?? '';
+  };
+
+  const MIME_BY_EXT: Record<string, string> = {
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    txt: 'text/plain',
+    csv: 'text/csv',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    heic: 'image/heic',
+    heif: 'image/heif',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    m4v: 'video/x-m4v',
+    webm: 'video/webm',
+  };
+
+  const resolveMimeType = (mimeType?: string | null, name?: string | null, uri?: string | null) => {
+    if (mimeType) return mimeType;
+    const ext = getFileExtension(name, uri);
+    if (ext && MIME_BY_EXT[ext]) return MIME_BY_EXT[ext];
+    return 'application/octet-stream';
+  };
+
+  const resolveMediaKind = (mimeType?: string | null, name?: string | null, uri?: string | null) => {
+    const resolved = resolveMimeType(mimeType, name, uri);
+    if (resolved.startsWith('image/')) return 'image';
+    if (resolved.startsWith('video/')) return 'video';
+    return 'file';
+  };
+
+  const buildUploadFileName = (upload: PendingUpload) => {
+    const rawName = (upload.name ?? upload.uri.split('/').pop() ?? 'upload').trim();
+    const cleanBase = rawName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
+    const ext = getFileExtension(rawName, upload.uri)
+      || (upload.kind === 'video' ? 'mp4' : upload.kind === 'image' ? 'jpg' : 'bin');
+    return `${sessionUserId ?? 'anon'}-${Date.now()}-${cleanBase}.${ext}`;
+  };
+
+  const buildStoragePath = (target: MediaPickerTarget, fileName: string) => {
+    const orgSegment = selectedOrgId ?? 'org';
+    if (target === 'chat') {
+      const groupSegment = selectedGroupId ?? 'group';
+      return `${orgSegment}/${groupSegment}/${fileName}`;
     }
+    if (target === 'exercise') return `${orgSegment}/exercises/${fileName}`;
+    if (target === 'assignment') return `${orgSegment}/assignments/${fileName}`;
+    return `${orgSegment}/submissions/${fileName}`;
   };
-  const uploadChatMedia = async (media: PendingChatMedia) => {
+
+  const uploadAttachment = async (upload: PendingUpload, target: MediaPickerTarget) => {
     if (supabaseUsingFallback || !supabaseUrl || !supabaseAnonKey) {
       throw new Error('Supabase nicht verbunden');
     }
     const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData.session?.access_token ?? null;
+    let accessToken = sessionData.session?.access_token ?? null;
+    if (!accessToken && typeof supabase.auth.refreshSession === 'function') {
+      const { data: refreshData } = await supabase.auth.refreshSession();
+      accessToken = refreshData.session?.access_token ?? null;
+    }
     if (!accessToken) {
       throw new Error('Nicht angemeldet');
     }
-    const nameFromUri = media.uri.split('/').pop() ?? '';
-    const rawExt = (media.name ?? nameFromUri).split('.').pop() ?? '';
-    const ext = rawExt ? rawExt.toLowerCase() : (media.type === 'video' ? 'mp4' : 'jpg');
-    const fileName = `${sessionUserId ?? 'anon'}-${Date.now()}.${ext}`;
-    const orgSegment = selectedOrgId ?? 'org';
-    const groupSegment = selectedGroupId ?? 'group';
-    const path = `${orgSegment}/${groupSegment}/${fileName}`;
-    const contentType = media.mimeType ?? (media.type === 'video' ? 'video/mp4' : 'image/jpeg');
+    const bucket = target === 'chat' ? CHAT_MEDIA_BUCKET : ATTACHMENTS_BUCKET;
+    const kind = upload.kind ?? resolveMediaKind(upload.mimeType, upload.name, upload.uri);
+    const fileName = buildUploadFileName({ ...upload, kind });
+    const path = buildStoragePath(target, fileName);
+    const contentType = resolveMimeType(upload.mimeType, fileName, upload.uri);
     const form = new FormData();
     form.append('file', {
-      uri: media.uri,
-      name: media.name ?? fileName,
+      uri: upload.uri,
+      name: fileName,
       type: contentType,
     } as any);
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${path}`;
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${path}`;
     const res = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
@@ -914,15 +1013,208 @@ export default function Home() {
     if (!res.ok) {
       const rawMsg = (payload?.message ?? '').toString();
       if (rawMsg.toLowerCase().includes('bucket not found')) {
-        throw new Error(`Storage-Bucket "${CHAT_MEDIA_BUCKET}" fehlt. Bitte im Supabase-Dashboard unter Storage anlegen.`);
+        throw new Error(`Storage-Bucket "${bucket}" fehlt. Bitte im Supabase-Dashboard unter Storage anlegen.`);
       }
       throw new Error(rawMsg || 'Upload fehlgeschlagen');
     }
-    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${CHAT_MEDIA_BUCKET}/${path}`;
+    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${path}`;
     return {
       url: publicUrl,
-      type: media.type,
-      name: media.name ?? fileName,
+      name: upload.name ?? fileName,
+      kind,
+    };
+  };
+
+  const handlePickedUploads = async (uploads: PendingUpload[], target: MediaPickerTarget) => {
+    if (!uploads.length) return;
+    if (target === 'chat') {
+      const next = uploads.map((item) => ({
+        uri: item.uri,
+        type: item.kind,
+        name: item.name ?? null,
+        mimeType: item.mimeType ?? null,
+      }));
+      if (next.length) {
+        setPendingChatMedia((prev) => [...next, ...prev]);
+      }
+      setShowMediaModal(false);
+      return;
+    }
+    if (supabaseUsingFallback || !supabaseUrl || !supabaseAnonKey) {
+      Alert.alert('Supabase offline', 'Dateien können nicht hochgeladen werden.');
+      return;
+    }
+    setMediaUploadBusy(true);
+    try {
+      if (target === 'exercise') {
+        const uploaded = await Promise.all(uploads.map((item) => uploadAttachment(item, target)));
+        const next = uploaded.map((item) => ({
+          id: uid(),
+          type: item.kind,
+          url: item.url,
+          name: item.name ?? null,
+        }));
+        if (next.length) setAttachments((prev) => [...next, ...prev]);
+      } else {
+        const uploaded = await Promise.all(uploads.map((item) => uploadAttachment(item, target)));
+        const urls = uploaded.map((item) => item.url);
+        if (target === 'assignment') {
+          setAssignmentAttachments((prev) => [...urls, ...prev]);
+        }
+        if (target === 'submission') {
+          setSubmissionAttachments((prev) => [...urls, ...prev]);
+        }
+      }
+      setShowMediaModal(false);
+      setMediaPickerTarget(null);
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Upload fehlgeschlagen.');
+    } finally {
+      setMediaUploadBusy(false);
+    }
+  };
+
+  const waitForPickerDismiss = async () => {
+    Keyboard.dismiss();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  };
+
+  const pickFromCamera = async () => {
+    if (!mediaPickerTarget) return;
+    const target = mediaPickerTarget;
+    setShowMediaModal(false);
+    await waitForPickerDismiss();
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf die Kamera.');
+        setShowMediaModal(true);
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        quality: 0.8,
+      });
+      if (result.canceled) {
+        setShowMediaModal(true);
+        return;
+      }
+      const asset = result.assets?.[0];
+      if (!asset) {
+        setShowMediaModal(true);
+        return;
+      }
+      const uploads: PendingUpload[] = [{
+        uri: asset.uri,
+        kind: asset.type === 'video' ? 'video' : 'image',
+        name: asset.fileName ?? null,
+        mimeType: asset.mimeType ?? null,
+      }];
+      await handlePickedUploads(uploads, target);
+    } catch {
+      Alert.alert('Fehler', 'Kamera konnte nicht geöffnet werden.');
+    }
+  };
+
+  const pickFromFiles = async () => {
+    if (!mediaPickerTarget) return;
+    const target = mediaPickerTarget;
+    setShowMediaModal(false);
+    await waitForPickerDismiss();
+    try {
+      const allowMultiple = target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission';
+      const res = await DocumentPicker.getDocumentAsync({ multiple: allowMultiple, copyToCacheDirectory: true, type: '*/*' });
+      if ((res as any).canceled || (res as any).type === 'cancel') {
+        setShowMediaModal(true);
+        return;
+      }
+      const assets = 'assets' in res && Array.isArray((res as any).assets)
+        ? (res as any).assets
+        : (res as any).uri
+          ? [res]
+          : [];
+      const uploads = assets
+        .map((asset: any) => ({
+          uri: asset.uri,
+          kind: resolveMediaKind(asset.mimeType ?? null, asset.name ?? null, asset.uri),
+          name: asset.name ?? null,
+          mimeType: asset.mimeType ?? null,
+        }))
+        .filter((asset: any) => !!asset.uri);
+      if (!uploads.length) {
+        setShowMediaModal(true);
+        return;
+      }
+      await handlePickedUploads(uploads, target);
+    } catch {
+      Alert.alert('Fehler', 'Datei konnte nicht geladen werden.');
+    }
+  };
+
+  const pickFromLibrary = async () => {
+    if (!mediaPickerTarget) return;
+    const target = mediaPickerTarget;
+    setShowMediaModal(false);
+    await waitForPickerDismiss();
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Berechtigung benötigt', 'Bitte erlaube den Zugriff auf Fotos/Videos.');
+        setShowMediaModal(true);
+        return;
+      }
+      const allowMultiple = target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission';
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        allowsMultipleSelection: allowMultiple,
+        quality: 0.8,
+      });
+      if (result.canceled) {
+        setShowMediaModal(true);
+        return;
+      }
+      const uploads = (result.assets ?? [])
+        .map((asset) => ({
+          uri: asset.uri,
+          kind: asset.type === 'video' ? 'video' as const : 'image' as const,
+          name: asset.fileName ?? null,
+          mimeType: asset.mimeType ?? null,
+        }))
+        .filter((asset) => !!asset.uri);
+      if (!uploads.length) {
+        setShowMediaModal(true);
+        return;
+      }
+      await handlePickedUploads(uploads, target);
+    } catch {
+      Alert.alert('Fehler', 'Medien konnten nicht geladen werden.');
+    }
+  };
+
+  const pickDocument = async () => {
+    await pickFromFiles();
+  };
+
+  const handleAttachmentButton = () => {
+    openMediaPicker('exercise');
+  };
+  const pickChatMedia = async () => {
+    openMediaPicker('chat');
+  };
+  const uploadChatMedia = async (media: PendingChatMedia) => {
+    const uploaded = await uploadAttachment(
+      {
+        uri: media.uri,
+        kind: media.type,
+        name: media.name ?? null,
+        mimeType: media.mimeType ?? null,
+      },
+      'chat',
+    );
+    return {
+      url: uploaded.url,
+      type: uploaded.kind,
+      name: uploaded.name ?? null,
     } as ChatMedia;
   };
 
@@ -943,6 +1235,42 @@ export default function Home() {
     return legacy;
   };
 
+  const normalizeExerciseAttachments = (raw: any): ExerciseAttachment[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((item) => item && typeof item.url === 'string')
+      .map((item, index) => ({
+        id: typeof item.id === 'string' ? item.id : `att-${index}`,
+        type: item.type === 'video' ? 'video' : item.type === 'file' ? 'file' : 'image',
+        url: item.url,
+        name: typeof item.name === 'string' ? item.name : undefined,
+      }));
+  };
+
+  const mapExerciseRow = (row: any): Exercise => {
+    const attachments = normalizeExerciseAttachments(row?.attachments);
+    const primaryImage = attachments.find((a) => a.type === 'image')?.url;
+    const primaryVideo = attachments.find((a) => a.type === 'video')?.url;
+    return {
+      id: row.id,
+      title: row.title ?? '',
+      description: row.description ?? undefined,
+      imageUrl: primaryImage || undefined,
+      videoUrl: primaryVideo || undefined,
+      attachments: attachments.length ? attachments : undefined,
+      textStyles: row?.text_styles ?? undefined,
+      createdAt: row?.created_at ?? row?.updated_at ?? undefined,
+    };
+  };
+
+  const sortExercises = (items: Exercise[]) => (
+    items.slice().sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    })
+  );
+
   const beginEditExercise = (ex: Exercise) => {
     setShowMediaModal(false);
     setSelectedExercise(null);
@@ -957,15 +1285,28 @@ export default function Home() {
     setShowAddExercise(true);
   };
 
-  const deleteExercise = (id: string) => {
-    setExercises((prev) => prev.filter((ex) => ex.id !== id));
-    if (selectedExercise?.id === id) setSelectedExercise(null);
-    if (editingExerciseId === id) setEditingExerciseId(null);
+  const deleteExercise = async (id: string) => {
+    if (!isUuid(id) || supabaseUsingFallback || !selectedOrgId || !sessionUserId) {
+      setExercises((prev) => prev.filter((ex) => ex.id !== id));
+      if (selectedExercise?.id === id) setSelectedExercise(null);
+      if (editingExerciseId === id) setEditingExerciseId(null);
+      return;
+    }
+    try {
+      const { error } = await supabase.from('exercises').delete().eq('id', id);
+      if (error) throw error;
+      setExercises((prev) => prev.filter((ex) => ex.id !== id));
+      if (selectedExercise?.id === id) setSelectedExercise(null);
+      if (editingExerciseId === id) setEditingExerciseId(null);
+    } catch (err: any) {
+      Alert.alert('Fehler', err?.message ?? 'Übung konnte nicht gelöscht werden.');
+    }
   };
 
-  const addExercise = () => {
+  const addExercise = async () => {
     const title = exerciseTitle.trim();
     if (!title) return;
+    const isLocalEdit = !!editingExerciseId && !isUuid(editingExerciseId);
     const attachmentsToSave = attachments.length
       ? attachments
       : [
@@ -974,44 +1315,94 @@ export default function Home() {
       ];
     const primaryImage = attachmentsToSave.find((a) => a.type === 'image')?.url;
     const primaryVideo = attachmentsToSave.find((a) => a.type === 'video')?.url;
-    if (editingExerciseId) {
-      setExercises((prev) => {
-        const existing = prev.find((e) => e.id === editingExerciseId);
-        const updated: Exercise = {
-          ...(existing ?? { id: editingExerciseId, createdAt: new Date().toISOString() }),
+
+    if (isLocalEdit || supabaseUsingFallback || !selectedOrgId || !sessionUserId) {
+      if (editingExerciseId) {
+        setExercises((prev) => {
+          const existing = prev.find((e) => e.id === editingExerciseId);
+          const updated: Exercise = {
+            ...(existing ?? { id: editingExerciseId, createdAt: new Date().toISOString() }),
+            title,
+            description: exerciseDescription.trim() || undefined,
+            imageUrl: primaryImage || undefined,
+            videoUrl: primaryVideo || undefined,
+            attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
+            textStyles: { title: titleStyle, description: descriptionStyle },
+          };
+          return prev.map((ex) => (ex.id === editingExerciseId ? updated : ex));
+        });
+        setSelectedExercise((prev) => (prev && prev.id === editingExerciseId ? {
+          ...prev,
           title,
           description: exerciseDescription.trim() || undefined,
           imageUrl: primaryImage || undefined,
           videoUrl: primaryVideo || undefined,
           attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
           textStyles: { title: titleStyle, description: descriptionStyle },
+        } : prev));
+      } else {
+        const newEx: Exercise = {
+          id: uid(),
+          title,
+          description: exerciseDescription.trim() || undefined,
+          imageUrl: primaryImage || undefined,
+          videoUrl: primaryVideo || undefined,
+          attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
+          textStyles: { title: titleStyle, description: descriptionStyle },
+          createdAt: new Date().toISOString(),
         };
-        return prev.map((ex) => (ex.id === editingExerciseId ? updated : ex));
-      });
-      setSelectedExercise((prev) => (prev && prev.id === editingExerciseId ? {
-        ...prev,
-        title,
-        description: exerciseDescription.trim() || undefined,
-        imageUrl: primaryImage || undefined,
-        videoUrl: primaryVideo || undefined,
-        attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
-        textStyles: { title: titleStyle, description: descriptionStyle },
-      } : prev));
-    } else {
-      const newEx: Exercise = {
-        id: uid(),
-        title,
-        description: exerciseDescription.trim() || undefined,
-        imageUrl: primaryImage || undefined,
-        videoUrl: primaryVideo || undefined,
-        attachments: attachmentsToSave.length ? attachmentsToSave : undefined,
-        textStyles: { title: titleStyle, description: descriptionStyle },
-        createdAt: new Date().toISOString(),
-      };
-      setExercises((prev) => [newEx, ...prev]);
+        setExercises((prev) => [newEx, ...prev]);
+      }
+      resetExerciseForm();
+      setShowAddExercise(false);
+      return;
     }
-    resetExerciseForm();
-    setShowAddExercise(false);
+
+    try {
+      if (editingExerciseId) {
+        const { data, error } = await supabase
+          .from('exercises')
+          .update({
+            title,
+            description: exerciseDescription.trim() || null,
+            attachments: attachmentsToSave.length ? attachmentsToSave : null,
+            text_styles: { title: titleStyle, description: descriptionStyle },
+            updated_by: sessionUserId,
+          })
+          .eq('id', editingExerciseId)
+          .select('id, org_id, group_id, title, description, attachments, text_styles, created_at, updated_at')
+          .single();
+        if (error) throw error;
+        if (data) {
+          const mapped = mapExerciseRow(data);
+          setExercises((prev) => sortExercises(prev.map((ex) => (ex.id === mapped.id ? mapped : ex))));
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('exercises')
+          .insert({
+            org_id: selectedOrgId,
+            group_id: null,
+            title,
+            description: exerciseDescription.trim() || null,
+            attachments: attachmentsToSave.length ? attachmentsToSave : null,
+            text_styles: { title: titleStyle, description: descriptionStyle },
+            created_by: sessionUserId,
+            updated_by: sessionUserId,
+          })
+          .select('id, org_id, group_id, title, description, attachments, text_styles, created_at, updated_at')
+          .single();
+        if (error) throw error;
+        if (data) {
+          const mapped = mapExerciseRow(data);
+          setExercises((prev) => sortExercises([mapped, ...prev]));
+        }
+      }
+      resetExerciseForm();
+      setShowAddExercise(false);
+    } catch (err: any) {
+      Alert.alert('Fehler', err?.message ?? 'Übung konnte nicht gespeichert werden.');
+    }
   };
 
   const deleteOrganisationCascade = async (orgId: string) => {
@@ -1415,7 +1806,7 @@ export default function Home() {
     }
     const baseDate = parseLocalDateOnly(dateStr);
     if (!baseDate || Number.isNaN(baseDate.getTime())) {
-      Alert.alert('Kalender', 'Das eingetragene Datum ist ungueltig.');
+      Alert.alert('Kalender', 'Das eingetragene Datum ist ungültig.');
       return;
     }
     const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 0, 0, 0, 0);
@@ -1455,7 +1846,7 @@ export default function Home() {
   };
   const handleAnnouncementCalendarUnsync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte w?hle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
@@ -1519,7 +1910,7 @@ export default function Home() {
       ]);
       if (!alive) return;
       if (annRes.error) {
-        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungungen konnten nicht geladen werden.');
+        Alert.alert('Fehler', annRes.error.message ?? 'Ankündigungen konnten nicht geladen werden.');
         setAnnRemote([]);
       } else {
         setAnnRemote((annRes.data ?? []) as any[]);
@@ -1551,13 +1942,13 @@ export default function Home() {
 
   useEffect(() => {
     if (screen !== 'chat') {
-      setPendingChatMedia(null);
+      setPendingChatMedia([]);
       setChatUploadBusy(false);
     }
   }, [screen]);
 
   useEffect(() => {
-    setPendingChatMedia(null);
+    setPendingChatMedia([]);
   }, [selectedGroupId]);
 
   const refreshChatUnreadCounts = useCallback(async () => {
@@ -1668,6 +2059,11 @@ export default function Home() {
           const r = payload.new as { id: string; user_id: string | null; body: string | null; created_at: string };
           setMessages((prev: ChatMessage[]) => (prev.some((m) => m.id === r.id) ? prev : [...prev, buildChatMessage(r)]));
           if (r.user_id) ensureMessageUserNames([r.user_id]);
+        })
+        ?.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages', filter: `channel_id=eq.${chatChannelId}` }, (payload: any) => {
+          const oldId = payload.old?.id as string | undefined;
+          if (!oldId) return;
+          setMessages((prev: ChatMessage[]) => prev.filter((m) => m.id !== oldId));
         })
         ?.subscribe();
       unsub = () => chan?.unsubscribe?.();
@@ -1819,33 +2215,42 @@ export default function Home() {
   useEffect(() => {
     if (supabaseUsingFallback || !selectedOrgId) return;
     if (!assignments.length && !assignmentSubmissions.length) return;
+    const canWriteAssignments = orgRole === 'teacher' || orgRole === 'director';
     const sync = async () => {
       try {
-        if (assignments.length) {
-          const payload = assignments.map((a) => ({
-            id: a.id,
-            org_id: a.orgId,
-            group_id: a.groupId,
-            title: a.title,
-            description: a.description ?? null,
-            attachment_url: a.attachmentUrl ?? null,
-            due_at: a.dueAt ?? null,
-            created_by: a.createdBy ?? null,
-            created_at: a.createdAt ?? new Date().toISOString(),
-          }));
-          await (supabase.from('assignments' as any) as any).upsert(payload, { onConflict: 'id' } as any);
+        if (assignments.length && canWriteAssignments) {
+          const payload = assignments
+            .filter((a) => a.orgId && a.orgId === selectedOrgId)
+            .map((a) => ({
+              id: a.id,
+              org_id: a.orgId,
+              group_id: a.groupId,
+              title: a.title,
+              description: a.description ?? null,
+              attachment_url: a.attachmentUrl ?? null,
+              due_at: a.dueAt ?? null,
+              created_by: a.createdBy ?? null,
+              created_at: a.createdAt ?? new Date().toISOString(),
+            }));
+          if (payload.length) {
+            await (supabase.from('assignments' as any) as any).upsert(payload, { onConflict: 'id' } as any);
+          }
         }
-        if (assignmentSubmissions.length) {
-          const payloadSubs = assignmentSubmissions.map((s) => ({
-            id: s.id,
-            assignment_id: s.assignmentId,
-            user_id: s.userId,
-            user_name: s.userName ?? null,
-            note: s.note ?? null,
-            attachment_url: s.attachmentUrl ?? null,
-            submitted_at: s.submittedAt,
-          }));
-          await (supabase.from('assignment_submissions' as any) as any).upsert(payloadSubs, { onConflict: 'id' } as any);
+        if (assignmentSubmissions.length && sessionUserId) {
+          const payloadSubs = assignmentSubmissions
+            .filter((s) => s.userId === sessionUserId)
+            .map((s) => ({
+              id: s.id,
+              assignment_id: s.assignmentId,
+              user_id: s.userId,
+              user_name: s.userName ?? null,
+              note: s.note ?? null,
+              attachment_url: s.attachmentUrl ?? null,
+              submitted_at: s.submittedAt,
+            }));
+          if (payloadSubs.length) {
+            await (supabase.from('assignment_submissions' as any) as any).upsert(payloadSubs, { onConflict: 'id' } as any);
+          }
         }
       } catch (e: any) {
         if (!assignmentSyncErrorShown.current) {
@@ -1855,7 +2260,7 @@ export default function Home() {
       }
     };
     sync();
-  }, [assignments, assignmentSubmissions, selectedOrgId]);
+  }, [assignments, assignmentSubmissions, selectedOrgId, orgRole, sessionUserId]);
 
   const groupNameFor = (id: string | null) => groups.find((g) => g.id === id)?.name ?? 'Ohne Gruppe';
   const formatAssignmentDue = (iso?: string) => {
@@ -1868,7 +2273,7 @@ export default function Home() {
   const resetAssignmentForm = () => {
     setAssignmentTitle('');
     setAssignmentDescription('');
-    setAssignmentAttachment('');
+    setAssignmentAttachments([]);
     setAssignmentDueDate(null);
     setAssignmentGroupId((prev) => prev ?? assignmentGroupsForTeacher[0]?.id ?? null);
     setEditingAssignmentId(null);
@@ -1876,11 +2281,19 @@ export default function Home() {
     setShowDueTimePicker(false);
   };
 
+  const removeAssignmentAttachmentAt = (index: number) => {
+    setAssignmentAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeSubmissionAttachmentAt = (index: number) => {
+    setSubmissionAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const startAssignmentEdit = (assignment: Assignment) => {
     setEditingAssignmentId(assignment.id);
     setAssignmentTitle(assignment.title ?? '');
     setAssignmentDescription(assignment.description ?? '');
-    setAssignmentAttachment(assignment.attachmentUrl ?? '');
+    setAssignmentAttachments(parseAttachmentUrls(assignment.attachmentUrl));
     setAssignmentGroupId(assignment.groupId ?? assignmentGroupsForTeacher[0]?.id ?? null);
     setAssignmentDueDate(assignment.dueAt ? new Date(assignment.dueAt) : null);
     setShowDueDatePicker(false);
@@ -1901,7 +2314,7 @@ export default function Home() {
     setSelectedSubmission(null);
     setEditingAssignmentId(null);
     setSubmissionNote('');
-    setSubmissionAttachment('');
+    setSubmissionAttachments([]);
   };
 
   const submissionMap = useMemo(() => {
@@ -1937,14 +2350,14 @@ export default function Home() {
     setSelectedAssignment(null);
     setSelectedSubmission(null);
     setSubmissionNote('');
-    setSubmissionAttachment('');
+    setSubmissionAttachments([]);
   }, [assignmentStorageKey]);
 
   const openAssignmentDetail = (assignment: Assignment) => {
     setSelectedAssignment(assignment);
     const mySubmission = submissionMap.get(assignment.id);
     setSubmissionNote(mySubmission?.note ?? '');
-    setSubmissionAttachment(mySubmission?.attachmentUrl ?? '');
+    setSubmissionAttachments(parseAttachmentUrls(mySubmission?.attachmentUrl));
     setAssignmentView(orgRole === 'student' ? 'detail' : 'submissions');
   };
 
@@ -1982,7 +2395,7 @@ export default function Home() {
       return;
     }
     const note = submissionNote.trim();
-    const attachment = submissionAttachment.trim();
+    const attachment = formatAttachmentUrls(submissionAttachments);
     const displayName = await resolveCurrentUserDisplayName();
     const payload: AssignmentSubmission = {
       id: uuidv4(),
@@ -1990,7 +2403,7 @@ export default function Home() {
       userId: sessionUserId,
       userName: displayName ?? null,
       note: note || undefined,
-      attachmentUrl: attachment || undefined,
+      attachmentUrl: attachment,
       submittedAt: new Date().toISOString(),
     };
     setAssignmentSubmissions((prev) => {
@@ -2052,10 +2465,18 @@ export default function Home() {
   const saveAssignment = async () => {
     const title = assignmentTitle.trim();
     const desc = assignmentDescription.trim();
-    const attachment = assignmentAttachment.trim();
+    const attachment = formatAttachmentUrls(assignmentAttachments);
     const groupId = assignmentGroupId ?? assignmentGroupsForTeacher[0]?.id ?? null;
     if (!title) {
       Alert.alert('Titel fehlt', 'Bitte gib einen Titel ein.');
+      return;
+    }
+    if (!selectedOrgId) {
+      Alert.alert('Kein Verein', 'Bitte wähle zuerst einen Verein.');
+      return;
+    }
+    if (!sessionUserId) {
+      Alert.alert('Login erforderlich', 'Bitte melde dich an, um Aufgaben zu speichern.');
       return;
     }
     if (!groupId) {
@@ -2075,7 +2496,7 @@ export default function Home() {
       groupId,
       title,
       description: desc || undefined,
-      attachmentUrl: attachment || undefined,
+      attachmentUrl: attachment,
       dueAt: dueIso || undefined,
       createdAt,
       createdBy,
@@ -2112,6 +2533,100 @@ export default function Home() {
     goBackToAssignmentList();
   };
 
+
+
+  const renderMediaPickerCard = () => (
+    <View style={[styles.modalCard, styles.orgModalCard]}>
+      <View style={{ padding: 12 }}>
+        <Text style={styles.sectionTitle}>Datei hinzufügen</Text>
+        <TouchableOpacity
+          onPress={pickFromCamera}
+          style={[styles.attachmentButton, { marginTop: 8 }, mediaUploadBusy && { opacity: 0.6 }]}
+          disabled={mediaUploadBusy}
+        >
+          <Text style={styles.attachmentButtonText}>Kamera</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={pickFromLibrary}
+          style={[styles.attachmentButton, { marginTop: 8 }, mediaUploadBusy && { opacity: 0.6 }]}
+          disabled={mediaUploadBusy}
+        >
+          <Text style={styles.attachmentButtonText}>Aus Galerie wählen</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={pickFromFiles}
+          style={[styles.attachmentButton, { marginTop: 8 }, mediaUploadBusy && { opacity: 0.6 }]}
+          disabled={mediaUploadBusy}
+        >
+          <Text style={styles.attachmentButtonText}>Aus Dateien wählen</Text>
+        </TouchableOpacity>
+        {mediaPickerTarget === 'exercise' && (
+          <>
+            <Text style={[styles.label, styles.mediaHint]}>Oder per Link:</Text>
+            <View style={styles.mediaTypeRow}>
+              <TouchableOpacity
+                style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'image' && styles.formatButtonActive]}
+                onPress={() => setNewMediaType('image')}
+              >
+                <Text style={[styles.formatButtonText, newMediaType === 'image' && styles.formatButtonTextActive]}>Bild</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'video' && styles.formatButtonActive]}
+                onPress={() => setNewMediaType('video')}
+              >
+                <Text style={[styles.formatButtonText, newMediaType === 'video' && styles.formatButtonTextActive]}>Video</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'file' && styles.formatButtonActive]}
+                onPress={() => setNewMediaType('file')}
+              >
+                <Text style={[styles.formatButtonText, newMediaType === 'file' && styles.formatButtonTextActive]}>Datei</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={[styles.input, { marginTop: 8 }]}
+              placeholder={
+                newMediaType === 'image'
+                  ? 'Bild-URL einügen'
+                  : newMediaType === 'video'
+                    ? 'Video-Link (YouTube, Vimeo, etc.)'
+                    : 'Datei-Link (PDF, Dokumente, etc.)'
+              }
+              placeholderTextColor={'#95959588'}
+              value={newMediaUrl}
+              onChangeText={setNewMediaUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {!!attachments.length && (
+              <ScrollView style={{ maxHeight: 180, marginTop: 8 }}>
+                {attachments.map(renderAttachmentChip)}
+              </ScrollView>
+            )}
+          </>
+        )}
+        <View style={{ flexDirection: 'row', marginTop: 12 }}>
+          {mediaPickerTarget === 'exercise' && (
+            <TouchableOpacity onPress={addAttachmentFromModal} style={[styles.actionButton, styles.actionButtonPrimary, { marginRight: 8 }]}>
+              <Text style={styles.actionButtonText}>Hinzufügen</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={closeMediaPicker} style={styles.actionButton}>
+            <Text style={styles.actionButtonText}>Schliessen</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  const mediaPickerOverlay = showMediaModal && mediaPickerTarget !== 'exercise' ? (
+    <View style={styles.mediaPickerOverlay}>
+      <Pressable style={styles.modalOverlay} onPress={closeMediaPicker} />
+      <View style={styles.modalCenterWrap}>
+        {renderMediaPickerCard()}
+      </View>
+    </View>
+  ) : null;
 
   if (screen === 'ankuendigung') {
     return (
@@ -2159,7 +2674,7 @@ export default function Home() {
               )}
             </TouchableOpacity>
           )}
-          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden…' : 'Keine Ankündigungen vorhanden.'}</Text>}
+          ListEmptyComponent={<Text style={styles.text}>{loadingRemote ? 'Laden' : 'Keine Ankündigungen vorhanden.'}</Text>}
         />
 
 
@@ -2195,7 +2710,7 @@ export default function Home() {
                   onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
                 >
                   <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum ausw?hlen'}
                   </Text>
                 </TouchableOpacity>
                 {showAnnouncementDatePicker && Platform.OS === 'ios' && (
@@ -2311,6 +2826,9 @@ export default function Home() {
 
 
         {/* Modal: Gruppe erstellen */}
+
+      {mediaPickerOverlay}
+
 
       </SafeAreaView>
     );
@@ -2474,9 +2992,40 @@ export default function Home() {
               </View>
             </View>
           </Modal>
+        {mediaPickerOverlay}
+
         </SafeAreaView>
       );
     }
+    const canDeleteChatMessage = (msg: ChatMessage) => {
+      if (!sessionUserId) return false;
+      if (msg.userId === sessionUserId) return true;
+      return orgRole === 'director' || orgRole === 'teacher';
+    };
+
+    const confirmDeleteChatMessage = (msg: ChatMessage) => {
+      if (!canDeleteChatMessage(msg)) return;
+      Alert.alert('Nachricht löschen', 'Diese Nachricht wirklich löschen?', [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await (supabase.from('messages') as any)
+                .delete()
+                .eq('id', msg.id);
+              if (error) throw error;
+              setMessages((prev: ChatMessage[]) => prev.filter((m) => m.id !== msg.id));
+            } catch (err: any) {
+              const message = (err && err.message) ? err.message : 'Nachricht konnte nicht gelöscht werden.';
+              Alert.alert('Fehler', message);
+            }
+          },
+        },
+      ]);
+    };
+
     const renderItem = ({ item }: { item: typeof messages[number] }) => {
       const userId = item.userId ?? '';
       const displayName = (item.senderName?.trim())
@@ -2488,31 +3037,85 @@ export default function Home() {
             ? `Mitglied ${userId.slice(0, 6)}`
             : 'Mitglied');
       const hasText = item.text.trim().length > 0;
-      const displayMediaUrl = item.mediaUrl ? (chatMediaUrlCache[item.mediaUrl] ?? item.mediaUrl) : null;
+      const mediaItems = item.mediaItems?.length
+        ? item.mediaItems
+        : item.mediaUrl
+          ? [{
+            url: item.mediaUrl,
+            type: item.mediaType ?? 'file',
+            name: item.mediaName ?? null,
+          }]
+          : [];
       return (
         <View style={[styles.bubbleRow, item.from === 'me' ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}>
           <View style={{ width: '100%', alignItems: item.from === 'me' ? 'flex-end' : 'flex-start' }}>
-            <Text style={[styles.bubbleName, item.from === 'me' && styles.bubbleNameMe]}>{displayName}</Text>
+            <View style={styles.bubbleHeader}>
+              <Text style={[styles.bubbleName, item.from === 'me' && styles.bubbleNameMe]}>{displayName}</Text>
+              {canDeleteChatMessage(item) && (
+                <TouchableOpacity
+                  onPress={() => confirmDeleteChatMessage(item)}
+                  style={styles.chatDeleteBtn}
+                >
+                  <Ionicons name="trash-outline" size={14} color="#9CA3AF" />
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={[styles.bubble, item.from === 'me' ? styles.bubbleMe : styles.bubbleOther]}>
               {hasText && (
                 <Text style={[styles.bubbleText, item.from === 'me' && { color: '#fff' }]}>{item.text}</Text>
               )}
-              {!!displayMediaUrl && item.mediaType === 'image' && (
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => setFullScreenMedia({ url: displayMediaUrl, type: 'image', name: item.mediaName ?? null })}
-                >
-                  <Image source={{ uri: displayMediaUrl }} style={styles.chatMediaBubble} resizeMode="cover" />
-                </TouchableOpacity>
-              )}
-              {!!displayMediaUrl && item.mediaType === 'video' && (
-                <InlineVideo
-                  uri={displayMediaUrl}
-                  style={styles.chatMediaBubble}
-                  contentFit="cover"
-                  nativeControls
-                />
-              )}
+              {mediaItems.map((media, index) => {
+                const displayUrl = media.url ? (chatMediaUrlCache[media.url] ?? media.url) : null;
+                if (!displayUrl) return null;
+                if (media.type === 'image') {
+                  return (
+                    <TouchableOpacity
+                      key={`${displayUrl}-${index}`}
+                      activeOpacity={0.85}
+                      onPress={() => setFullScreenMedia({ url: displayUrl, type: 'image', name: media.name ?? null })}
+                      style={index > 0 ? { marginTop: 8 } : undefined}
+                    >
+                      <Image source={{ uri: displayUrl }} style={styles.chatMediaBubble} resizeMode="cover" />
+                    </TouchableOpacity>
+                  );
+                }
+                if (media.type === 'video') {
+                  return (
+                    <View key={`${displayUrl}-${index}`} style={index > 0 ? { marginTop: 8 } : undefined}>
+                      <View style={styles.chatMediaBubble}>
+                        <InlineVideo
+                          uri={displayUrl}
+                          style={styles.chatMediaVideo}
+                          contentFit="cover"
+                          nativeControls={false}
+                        />
+                        <Pressable
+                          style={styles.chatVideoOverlay}
+                          onPress={() => setFullScreenMedia({ url: displayUrl, type: 'video', name: media.name ?? null })}
+                        >
+                          <View style={styles.videoOverlay}>
+                            <Ionicons name="expand" size={18} color="#E5F4EF" />
+                            <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild</Text>
+                          </View>
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                }
+                return (
+                  <TouchableOpacity
+                    key={`${displayUrl}-${index}`}
+                    activeOpacity={0.85}
+                    onPress={() => openDocument(displayUrl)}
+                    style={[styles.chatFileBubble, index > 0 && { marginTop: 8 }]}
+                  >
+                    <Ionicons name="document-text-outline" size={20} color="#9FE1C7" style={{ marginRight: 8 }} />
+                    <Text style={styles.chatFileText} numberOfLines={1}>
+                      {fileLabelFromUrl(displayUrl, media.name)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
               <Text style={styles.bubbleTime}>{item.at}</Text>
             </View>
           </View>
@@ -2567,26 +3170,61 @@ export default function Home() {
             renderItem={renderItem}
           />
           {/* Kanal-Hinweis entfernt: für Director wird automatisch ein Standardkanal erstellt */}
-          {!!pendingChatMedia && (
+          {!!pendingChatMedia.length && (
             <View style={styles.chatMediaPreview}>
-              {pendingChatMedia.type === 'image' ? (
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => setFullScreenMedia({ url: pendingChatMedia.uri, type: 'image', name: pendingChatMedia.name ?? null })}
-                >
-                  <Image source={{ uri: pendingChatMedia.uri }} style={styles.chatMediaPreviewImage} resizeMode="cover" />
-                </TouchableOpacity>
-              ) : (
-                <InlineVideo
-                  uri={pendingChatMedia.uri}
-                  style={styles.chatMediaPreviewImage}
-                  contentFit="cover"
-                  nativeControls
-                />
-              )}
-              <TouchableOpacity style={styles.chatMediaRemove} onPress={() => setPendingChatMedia(null)}>
-                <Ionicons name="close" size={16} color="#FFFFFF" />
-              </TouchableOpacity>
+              <ScrollView
+                contentContainerStyle={styles.chatMediaPreviewContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {pendingChatMedia.map((media, index) => (
+                  <View
+                    key={`${media.uri}-${index}`}
+                    style={[styles.chatMediaPreviewItem, index > 0 && { marginTop: 8 }]}
+                  >
+                  {media.type === 'image' && (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => setFullScreenMedia({ url: media.uri, type: 'image', name: media.name ?? null })}
+                    >
+                      <Image source={{ uri: media.uri }} style={styles.chatMediaPreviewImage} resizeMode="cover" />
+                    </TouchableOpacity>
+                  )}
+                  {media.type === 'video' && (
+                    <View style={[styles.chatMediaPreviewImage, { overflow: 'hidden' }]}>
+                      <InlineVideo
+                        uri={media.uri}
+                        style={styles.chatMediaPreviewVideo}
+                        contentFit="cover"
+                        nativeControls={false}
+                      />
+                      <Pressable
+                        style={styles.chatVideoOverlay}
+                        onPress={() => setFullScreenMedia({ url: media.uri, type: 'video', name: media.name ?? null })}
+                      >
+                        <View style={styles.videoOverlay}>
+                          <Ionicons name="expand" size={18} color="#E5F4EF" />
+                          <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild</Text>
+                        </View>
+                      </Pressable>
+                    </View>
+                  )}
+                  {media.type === 'file' && (
+                    <View style={styles.chatFileBubble}>
+                      <Ionicons name="document-text-outline" size={20} color="#9FE1C7" style={{ marginRight: 8 }} />
+                      <Text style={styles.chatFileText} numberOfLines={1}>
+                        {fileLabelFromUrl(media.uri, media.name)}
+                      </Text>
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={styles.chatMediaRemove}
+                    onPress={() => setPendingChatMedia((prev) => prev.filter((_, i) => i !== index))}
+                  >
+                    <Ionicons name="close" size={16} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
             </View>
           )}
           <View style={[styles.inputRow, { marginBottom: bottomGap }]}>
@@ -2604,7 +3242,7 @@ export default function Home() {
               value={draft}
               onChangeText={setDraft}
               multiline
-              scrollEnabled={chatInputHeight >= MAX_CHAT_INPUT_HEIGHT}
+              scrollEnabled
               textAlignVertical="top"
               onContentSizeChange={(e) => {
                 const h = Math.ceil(e.nativeEvent.contentSize.height);
@@ -2618,13 +3256,13 @@ export default function Home() {
               onPress={() => {
                 const txt = draft.trim();
                 if (!chatChannelId || !sessionUserId || chatUploadBusy) return;
-                if (!txt && !pendingChatMedia) return;
+                if (!txt && !pendingChatMedia.length) return;
                 (async () => {
                   setChatUploadBusy(true);
                   try {
-                    let mediaPayload: ChatMedia | null = null;
-                    if (pendingChatMedia) {
-                      mediaPayload = await uploadChatMedia(pendingChatMedia);
+                    let mediaPayload: ChatMedia[] | null = null;
+                    if (pendingChatMedia.length) {
+                      mediaPayload = await Promise.all(pendingChatMedia.map((item) => uploadChatMedia(item)));
                     }
                     const senderName = await resolveCurrentUserDisplayName();
                     const body = buildChatBody(txt, mediaPayload, senderName ?? undefined);
@@ -2637,7 +3275,7 @@ export default function Home() {
                       setMessages((prev: ChatMessage[]) => ([...prev, buildChatMessage(data)]));
                       ensureMessageUserNames([data.user_id]);
                       setDraft('');
-                      setPendingChatMedia(null);
+                      setPendingChatMedia([]);
                     }
                   } catch (e: any) {
                     Alert.alert('Fehler', e?.message ?? 'Nachricht konnte nicht gesendet werden.');
@@ -2651,6 +3289,8 @@ export default function Home() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      {mediaPickerOverlay}
+
       </SafeAreaView>
     );
   }
@@ -2677,26 +3317,7 @@ export default function Home() {
         </TouchableOpacity>
       );
     };
-    const renderAttachmentChip = (att: ExerciseAttachment) => (
-      <View key={att.id} style={styles.attachmentPill}>
-        <Ionicons
-          name={
-            att.type === 'image'
-              ? 'image-outline'
-              : att.type === 'video'
-                ? 'videocam-outline'
-                : 'document-text-outline'
-          }
-          size={18}
-          color="#9FE1C7"
-          style={styles.attachmentIcon}
-        />
-        <Text style={styles.attachmentText} numberOfLines={1}>{att.name || att.url}</Text>
-        <TouchableOpacity onPress={() => removeAttachment(att.id)} style={styles.attachmentRemove}>
-          <Ionicons name="close" size={16} color="#E5F4EF" />
-        </TouchableOpacity>
-      </View>
-    );
+
     const selectedAttachments = getExerciseAttachments(selectedExercise);
 
     return (
@@ -2730,7 +3351,7 @@ export default function Home() {
           <Pressable style={styles.modalOverlay} onPress={closeAddExerciseModal} />
           <View style={styles.modalCenterWrap}>
             <View style={[styles.modalCard, styles.orgModalCard]}>
-              <ScrollView contentContainerStyle={{ padding: 12 }}>
+              <ScrollView contentContainerStyle={{ padding: 12 }} keyboardShouldPersistTaps="handled">
                 <Text style={styles.sectionTitle}>{editingExerciseId ? 'Übung bearbeiten' : 'Übung anlegen'}</Text>
                 <Text style={styles.label}>Titel</Text>
                 <View style={styles.formatBar}>
@@ -2760,7 +3381,7 @@ export default function Home() {
                   onChangeText={setExerciseDescription}
                 />
                 <TouchableOpacity onPress={handleAttachmentButton} style={styles.attachmentButton}>
-                  <Text style={styles.attachmentButtonText}>+ Bilder & Videos hinzufügen</Text>
+                  <Text style={styles.attachmentButtonText}>+ Dateien, Bilder & Videos hinzufügen</Text>
                 </TouchableOpacity>
                 {!!attachments.length && (
                   <View style={{ marginTop: 6 }}>
@@ -2778,78 +3399,21 @@ export default function Home() {
               </ScrollView>
             </View>
           </View>
-        </Modal>
-        <Modal visible={showMediaModal} transparent animationType="fade" presentationStyle="overFullScreen" onRequestClose={() => setShowMediaModal(false)}>
-          <Pressable style={styles.modalOverlay} onPress={() => setShowMediaModal(false)} />
-          <View style={styles.modalCenterWrap}>
-            <View style={[styles.modalCard, styles.orgModalCard]}>
-              <View style={{ padding: 12 }}>
-                <Text style={styles.sectionTitle}>Medien hinzufügen</Text>
-                <TouchableOpacity onPress={pickFromLibrary} style={[styles.attachmentButton, { marginTop: 8 }]}>
-                  <Text style={styles.attachmentButtonText}>Aus Galerie auswählen</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={pickDocument} style={[styles.attachmentButton, { marginTop: 8 }]}>
-                  <Text style={styles.attachmentButtonText}>Aus Dateien wählen</Text>
-                </TouchableOpacity>
-                <Text style={[styles.label, styles.mediaHint]}>Oder per Link:</Text>
-                <View style={styles.mediaTypeRow}>
-                  <TouchableOpacity
-                    style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'image' && styles.formatButtonActive]}
-                    onPress={() => setNewMediaType('image')}
-                  >
-                    <Text style={[styles.formatButtonText, newMediaType === 'image' && styles.formatButtonTextActive]}>Bild</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'video' && styles.formatButtonActive]}
-                    onPress={() => setNewMediaType('video')}
-                  >
-                    <Text style={[styles.formatButtonText, newMediaType === 'video' && styles.formatButtonTextActive]}>Video</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.formatButton, styles.mediaTypeButton, newMediaType === 'file' && styles.formatButtonActive]}
-                    onPress={() => setNewMediaType('file')}
-                  >
-                    <Text style={[styles.formatButtonText, newMediaType === 'file' && styles.formatButtonTextActive]}>Datei</Text>
-                  </TouchableOpacity>
+              {showMediaModal && mediaPickerTarget === 'exercise' && (
+                <View style={styles.mediaPickerOverlay}>
+                  <Pressable style={styles.modalOverlay} onPress={closeMediaPicker} />
+                  <View style={styles.modalCenterWrap}>
+                    {renderMediaPickerCard()}
+                  </View>
                 </View>
-                <TextInput
-                  style={[styles.input, { marginTop: 8 }]}
-                  placeholder={
-                    newMediaType === 'image'
-                      ? 'Bild-URL einfuegen'
-                      : newMediaType === 'video'
-                        ? 'Video-Link (YouTube, Vimeo, etc.)'
-                        : 'Datei-Link (PDF, Dokumente, etc.)'
-                  }
-                  placeholderTextColor={'#95959588'}
-                  value={newMediaUrl}
-                  onChangeText={setNewMediaUrl}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {!!attachments.length && (
-                  <ScrollView style={{ maxHeight: 180, marginTop: 8 }}>
-                    {attachments.map(renderAttachmentChip)}
-                  </ScrollView>
-                )}
-                <View style={{ flexDirection: 'row', marginTop: 12 }}>
-                  <TouchableOpacity onPress={addAttachmentFromModal} style={[styles.actionButton, styles.actionButtonPrimary, { marginRight: 8 }]}>
-                    <Text style={styles.actionButtonText}>hinzufuegen</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setShowMediaModal(false)} style={styles.actionButton}>
-                    <Text style={styles.actionButtonText}>Schliessen</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          </View>
+              )}
         </Modal>
 
         <Modal visible={!!selectedExercise} transparent animationType="fade" onRequestClose={() => setSelectedExercise(null)}>
           <Pressable style={styles.modalOverlay} onPress={() => setSelectedExercise(null)} />
           <View style={[styles.modalCenterWrap, { paddingHorizontal: 8 }]}>
             <View style={[styles.modalCard, styles.orgModalCard]}>
-              <ScrollView contentContainerStyle={{ padding: 12 }}>
+              <ScrollView contentContainerStyle={{ padding: 12 }} keyboardShouldPersistTaps="handled">
                 <Text style={[styles.exerciseDetailTitle, buildTextStyle(selectedExercise?.textStyles?.title)]}>{selectedExercise?.title}</Text>
                 {!!selectedExercise?.description && (
                   <Text style={[styles.exerciseDetailBody, buildTextStyle(selectedExercise?.textStyles?.description)]}>{selectedExercise?.description}</Text>
@@ -2870,16 +3434,24 @@ export default function Home() {
                     return (
                       <View key={att.id} style={styles.mediaWrapper}>
                         <TouchableOpacity
-                          onPress={() => att.url && Linking.openURL(att.url).catch(() => { })}
+                          onPress={() => openDocument(att.url)}
                           style={styles.videoPreview}
                           activeOpacity={0.9}
                         >
-                          <InlineVideo
-                            uri={att.url}
-                            style={styles.videoPlayer}
-                            contentFit="contain"
-                            nativeControls
-                          />
+                          {getYouTubeThumb(att.url) ? (
+                            <Image
+                              source={{ uri: getYouTubeThumb(att.url) ?? undefined }}
+                              style={styles.videoPlayer}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <InlineVideo
+                              uri={att.url}
+                              style={styles.videoPlayer}
+                              contentFit="contain"
+                              nativeControls
+                            />
+                          )}
                           <View style={styles.videoOverlay}>
                             <Ionicons name="expand" size={22} color="#E5F4EF" />
                             <Text style={styles.videoPreviewText} numberOfLines={1}>Vollbild öffnen</Text>
@@ -2891,13 +3463,13 @@ export default function Home() {
                   return (
                     <TouchableOpacity
                       key={att.id}
-                      onPress={() => att.url && Linking.openURL(att.url).catch(() => { })}
+                      onPress={() => openDocument(att.url)}
                       style={styles.videoPreview}
                       activeOpacity={0.85}
                     >
                       <View style={styles.videoPreviewInner}>
                         <Ionicons name="document-text-outline" size={42} color="#9FE1C7" />
-                        <Text style={styles.videoPreviewText} numberOfLines={2}>{att.url}</Text>
+                        <Text style={styles.videoPreviewText} numberOfLines={2}>{fileLabelFromUrl(att.url)}</Text>
                       </View>
                     </TouchableOpacity>
                   );
@@ -2935,6 +3507,8 @@ export default function Home() {
             </View>
           </View>
         </Modal>
+      {mediaPickerOverlay}
+
       </SafeAreaView>
     );
   }
@@ -2982,16 +3556,23 @@ export default function Home() {
               multiline
             />
 
-            <Text style={[styles.label, { marginTop: 10 }]}>Datei-Link</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Link zur Datei (optional)"
-              placeholderTextColor={'#95959588'}
-              value={assignmentAttachment}
-              onChangeText={setAssignmentAttachment}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            <Text style={[styles.label, { marginTop: 10 }]}>Datei</Text>
+            <TouchableOpacity onPress={() => openMediaPicker('assignment')} style={styles.attachmentButton}>
+              <Text style={styles.attachmentButtonText}>Datei hinzufügen</Text>
+            </TouchableOpacity>
+            {!!assignmentAttachments.length && (
+              <View style={{ marginTop: 6 }}>
+                {assignmentAttachments.map((url, index) => (
+                  <View key={`${url}-${index}`} style={[styles.attachmentPill, index > 0 && { marginTop: 6 }]}>
+                    <Ionicons name="document-text-outline" size={18} color="#9FE1C7" style={styles.attachmentIcon} />
+                    <Text style={styles.attachmentText} numberOfLines={1}>{fileLabelFromUrl(url)}</Text>
+                    <TouchableOpacity onPress={() => removeAssignmentAttachmentAt(index)} style={styles.attachmentRemove}>
+                      <Ionicons name="close" size={16} color="#E5F4EF" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
 
             <Text style={[styles.label, { marginTop: 10 }]}>Fällig bis</Text>
             <View style={{ flexDirection: 'row' }}>
@@ -3045,7 +3626,7 @@ export default function Home() {
                 </TouchableOpacity>
               ))}
               {!assignmentGroupsForTeacher.length && (
-                <Text style={styles.muted}>Keine Gruppe verfuegbar.</Text>
+                <Text style={styles.muted}>Keine Gruppe verfügbar.</Text>
               )}
             </View>
 
@@ -3058,12 +3639,15 @@ export default function Home() {
               </TouchableOpacity>
             </View>
           </ScrollView>
+        {mediaPickerOverlay}
+
         </SafeAreaView>
       );
     }
 
     if (assignmentView === 'detail' && selectedAssignment) {
       const mine = submissionMap.get(selectedAssignment.id);
+      const assignmentAttachmentList = parseAttachmentUrls(selectedAssignment.attachmentUrl);
       return (
         <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
           <View style={styles.assignmentHeader}>
@@ -3081,13 +3665,20 @@ export default function Home() {
             )}
             <Text style={styles.assignmentMeta}>Gruppe: {groupNameFor(selectedAssignment.groupId)}</Text>
             <Text style={styles.assignmentMeta}>Fällig: {formatAssignmentDue(selectedAssignment.dueAt)}</Text>
-            {!!selectedAssignment.attachmentUrl && (
-              <TouchableOpacity
-                onPress={() => Linking.openURL(selectedAssignment.attachmentUrl ?? '').catch(() => { })}
-                style={styles.attachmentButton}
-              >
-                <Text style={styles.attachmentButtonText}>Aufgabe-Datei öffnen</Text>
-              </TouchableOpacity>
+            {!!assignmentAttachmentList.length && (
+              <View style={{ marginTop: 8 }}>
+                {assignmentAttachmentList.map((url, index) => (
+                  <TouchableOpacity
+                    key={`${url}-${index}`}
+                    onPress={() => openDocument(url)}
+                    style={[styles.attachmentPill, index > 0 && { marginTop: 6 }]}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="document-text-outline" size={18} color="#9FE1C7" style={styles.attachmentIcon} />
+                    <Text style={styles.attachmentText} numberOfLines={1}>{fileLabelFromUrl(url)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             )}
 
             <View style={{ marginTop: 20 }}>
@@ -3100,16 +3691,23 @@ export default function Home() {
                 onChangeText={setSubmissionNote}
                 multiline
               />
-              <Text style={[styles.label, { marginTop: 10 }]}>Meine Datei (Link)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Link zu deiner Abgabe"
-                placeholderTextColor={'#95959588'}
-                value={submissionAttachment}
-                onChangeText={setSubmissionAttachment}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+              <Text style={[styles.label, { marginTop: 10 }]}>Meine Datei</Text>
+              <TouchableOpacity onPress={() => openMediaPicker('submission')} style={styles.attachmentButton}>
+                <Text style={styles.attachmentButtonText}>Datei hinzufügen</Text>
+              </TouchableOpacity>
+              {!!submissionAttachments.length && (
+                <View style={{ marginTop: 6 }}>
+                  {submissionAttachments.map((url, index) => (
+                    <View key={`${url}-${index}`} style={[styles.attachmentPill, index > 0 && { marginTop: 6 }]}>
+                      <Ionicons name="document-text-outline" size={18} color="#9FE1C7" style={styles.attachmentIcon} />
+                      <Text style={styles.attachmentText} numberOfLines={1}>{fileLabelFromUrl(url)}</Text>
+                      <TouchableOpacity onPress={() => removeSubmissionAttachmentAt(index)} style={styles.attachmentRemove}>
+                        <Ionicons name="close" size={16} color="#E5F4EF" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
               {mine && (
                 <Text style={styles.assignmentMeta}>
                   Bereits abgegeben: {formatAssignmentDue(mine.submittedAt)}
@@ -3155,6 +3753,8 @@ export default function Home() {
               )}
             </View>
           </ScrollView>
+        {mediaPickerOverlay}
+
         </SafeAreaView>
       );
     }
@@ -3201,11 +3801,14 @@ export default function Home() {
               </View>
             ))}
           </ScrollView>
+        {mediaPickerOverlay}
+
         </SafeAreaView>
       );
     }
 
     if (assignmentView === 'submissionDetail' && selectedSubmission && selectedAssignment) {
+      const submissionAttachmentList = parseAttachmentUrls(selectedSubmission.attachmentUrl);
       return (
         <SafeAreaView style={[styles.container, { paddingHorizontal: 16, alignItems: 'stretch' }]}>
           <View style={styles.assignmentHeader}>
@@ -3224,15 +3827,24 @@ export default function Home() {
             {!!selectedSubmission.note && (
               <Text style={[styles.assignmentBody, { marginTop: 10 }]}>{selectedSubmission.note}</Text>
             )}
-            {!!selectedSubmission.attachmentUrl && (
-              <TouchableOpacity
-                onPress={() => Linking.openURL(selectedSubmission.attachmentUrl ?? '').catch(() => { })}
-                style={[styles.attachmentButton, { marginTop: 12 }]}
-              >
-                <Text style={styles.attachmentButtonText}>Abgabe-Datei öffnen</Text>
-              </TouchableOpacity>
+            {!!submissionAttachmentList.length && (
+              <View style={{ marginTop: 12 }}>
+                {submissionAttachmentList.map((url, index) => (
+                  <TouchableOpacity
+                    key={`${url}-${index}`}
+                    onPress={() => openDocument(url)}
+                    style={[styles.attachmentPill, index > 0 && { marginTop: 6 }]}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="document-text-outline" size={18} color="#9FE1C7" style={styles.attachmentIcon} />
+                    <Text style={styles.attachmentText} numberOfLines={1}>{fileLabelFromUrl(url)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             )}
           </ScrollView>
+        {mediaPickerOverlay}
+
         </SafeAreaView>
       );
     }
@@ -3311,6 +3923,8 @@ export default function Home() {
             );
           }}
         />
+      {mediaPickerOverlay}
+
       </SafeAreaView>
     );
   }
@@ -3333,7 +3947,7 @@ export default function Home() {
           </View>
         )}
       </View>
-      {/* Login-Button entfernt: Auth flow steht jetzt ueber /login */}
+      {/* Login-Button entfernt: Auth flow steht jetzt über /login */}
 
       <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
         <Text style={styles.menuBtnText}>Ankündigungen</Text>
@@ -3612,7 +4226,7 @@ export default function Home() {
                     )}
                   </View>
                   <View style={styles.memberSection}>
-                    <Text style={styles.memberSectionTitle}>Schueler</Text>
+                    <Text style={styles.memberSectionTitle}>Schüler</Text>
                     {orgMembers.filter((m) => m.role === 'student').length ? (
                       orgMembers
                         .filter((m) => m.role === 'student')
@@ -3620,7 +4234,7 @@ export default function Home() {
                           renderMemberCard(member, !!(manageMembersOrg && orgRoles[manageMembersOrg.id] === 'director')),
                         )
                     ) : (
-                      <Text style={styles.memberEmptyText}>Keine Schueler vorhanden.</Text>
+                      <Text style={styles.memberEmptyText}>Keine Schüler vorhanden.</Text>
                     )}
                   </View>
                 </ScrollView>
@@ -3629,6 +4243,9 @@ export default function Home() {
           </View>
         </View>
       </Modal>
+
+    {mediaPickerOverlay}
+
 
     </SafeAreaView>
   );
@@ -3682,6 +4299,12 @@ const styles = StyleSheet.create({
   formatButtonTextActive: { color: '#9FE1C7' },
   attachmentButton: { paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#3D8B77', backgroundColor: '#0F2530', marginTop: 8 },
   attachmentButtonText: { color: '#9FE1C7', fontWeight: '700' },
+  attachmentPreviewCard: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 6 },
+  attachmentThumb: { width: 52, height: 52, borderRadius: 10, overflow: 'hidden', marginRight: 10, backgroundColor: '#0f2633' },
+  attachmentThumbImage: { width: '100%', height: '100%' },
+  attachmentThumbVideo: { width: '100%', height: '100%' },
+  attachmentThumbOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' },
+  attachmentThumbFile: { alignItems: 'center', justifyContent: 'center' },
   attachmentPill: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', marginBottom: 6 },
   attachmentIcon: { marginRight: 8 },
   attachmentText: { color: '#E5F4EF', flex: 1 },
@@ -3720,7 +4343,7 @@ const styles = StyleSheet.create({
 
   button: {
     backgroundColor: '#194055',   // Hintergrundfarbe
-    paddingVertical: 14,          // Höhe innen
+    paddingVertical: 14,          // H?he innen
     paddingHorizontal: 24,        // Breite innen
     borderRadius: 12,             // Runde Ecken
     marginVertical: 8,            // Abstand zwischen Buttons
@@ -3805,6 +4428,7 @@ const styles = StyleSheet.create({
 
   // Modal helpers
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.2)' },
+  mediaPickerOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'center', alignItems: 'stretch', paddingHorizontal: 0, zIndex: 20, elevation: 20 },
   modalCenterWrap: { flex: 1, justifyContent: 'center', alignItems: 'stretch', paddingHorizontal: 0 },
   modalCard: { width: '100%', maxWidth: '100%', backgroundColor: '#194055', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: '92%', shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6, elevation: 6, alignSelf: 'stretch' },
   orgModalCard: { backgroundColor: '#0f2533', borderColor: '#3D8B77' },
@@ -3841,10 +4465,19 @@ const styles = StyleSheet.create({
   bubbleOther: { backgroundColor: '#F3F4F6' },
   bubbleName: { fontSize: 11, fontWeight: '600', color: '#9CA3AF', marginBottom: 4 },
   bubbleNameMe: { color: '#C7D2D6' },
+  bubbleHeader: { flexDirection: 'row', alignItems: 'center' },
+  chatDeleteBtn: { marginLeft: 6, padding: 2, borderRadius: 10, opacity: 0.7 },
   bubbleText: { fontSize: 15 },
   bubbleTime: { fontSize: 10, color: '#6B7280', marginTop: 4, alignSelf: 'flex-end' },
   chatMediaBubble: { width: 220, height: 160, borderRadius: 12, marginTop: 6, backgroundColor: '#0f2633', overflow: 'hidden' },
-  chatMediaPreview: { width: '100%', maxWidth: 720, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', padding: 8, marginBottom: 8, overflow: 'hidden' },
+  chatMediaVideo: { width: '100%', height: '100%' },
+  chatMediaPreviewVideo: { width: '100%', height: '100%' },
+  chatVideoOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'flex-end', alignItems: 'center', padding: 8 },
+  chatFileBubble: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, marginTop: 6, borderRadius: 10, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530' },
+  chatFileText: { color: '#E5F4EF', flex: 1 },
+  chatMediaPreview: { width: '100%', maxWidth: 720, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', maxHeight: 220, marginBottom: 8, overflow: 'hidden' },
+  chatMediaPreviewContent: { padding: 8 },
+  chatMediaPreviewItem: { position: 'relative' },
   chatMediaPreviewImage: { width: '100%', height: 180, borderRadius: 10, backgroundColor: '#0f2633' },
   chatMediaRemove: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
   mediaFullscreenWrap: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
@@ -3880,6 +4513,79 @@ const formatDateDE = (iso: string) => {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
 };
 const formatBadgeCount = (count: number) => (count > 99 ? '99+' : `${count}`);
+const fileLabelFromUrl = (url?: string | null, fallback?: string | null) => {
+  const preferred = fallback?.trim();
+  if (preferred) return preferred;
+  if (!url) return 'Datei';
+  const clean = url.split('?')[0].split('#')[0];
+  const name = clean.split('/').pop() || url;
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+};
+const getYouTubeId = (url: string) => {
+  try {
+    const raw = url.trim();
+    if (!raw) return null;
+    const normalized = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be' || host.endsWith('.youtu.be')) {
+      const id = parsed.pathname.split('/').filter(Boolean)[0];
+      return id || null;
+    }
+    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+      const v = parsed.searchParams.get('v');
+      if (v) return v;
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'shorts' || parts[0] === 'embed') {
+        return parts[1] || null;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+const getYouTubeThumb = (url?: string | null) => {
+  if (!url) return null;
+  const id = getYouTubeId(url);
+  if (!id) return null;
+  return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+};
+const openDocument = (url?: string | null) => {
+  if (!url) return;
+  WebBrowser.openBrowserAsync(url).catch(() => {
+    Linking.openURL(url).catch(() => { });
+  });
+};
+const parseAttachmentUrls = (value?: string | null) => {
+  if (!value) return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((item) => typeof item === 'string')
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+    } catch {
+      // fall back to single value
+    }
+  }
+  return [trimmed];
+};
+const formatAttachmentUrls = (urls: string[]) => {
+  const clean = urls.map((u) => u.trim()).filter(Boolean);
+  if (!clean.length) return undefined;
+  if (clean.length === 1) return clean[0];
+  return JSON.stringify(clean);
+};
 const parseChatBody = (body: string | null) => {
   if (!body) return { text: '' };
   const trimmed = body.trim();
@@ -3894,14 +4600,30 @@ const parseChatBody = (body: string | null) => {
         ? (parsed as any).userName
         : '';
     const senderName = rawSender.trim() ? rawSender.trim() : null;
+    const normalizeMedia = (entry: any) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const url = typeof entry.url === 'string' ? entry.url : '';
+      const type = entry.type === 'video'
+        ? 'video'
+        : entry.type === 'image'
+          ? 'image'
+          : entry.type === 'file'
+            ? 'file'
+            : null;
+      const name = typeof entry.name === 'string' ? entry.name : null;
+      if (url && type) return { url, type, name } as ChatMedia;
+      return null;
+    };
     const rawMedia = (parsed as any).media;
-    if (rawMedia && typeof rawMedia === 'object') {
-      const url = typeof rawMedia.url === 'string' ? rawMedia.url : '';
-      const type = rawMedia.type === 'video' ? 'video' : rawMedia.type === 'image' ? 'image' : null;
-      const name = typeof rawMedia.name === 'string' ? rawMedia.name : null;
-      if (url && type) {
-        return { text: rawText, media: { url, type, name } as ChatMedia, senderName };
+    if (Array.isArray(rawMedia)) {
+      const mediaItems = rawMedia.map(normalizeMedia).filter(Boolean) as ChatMedia[];
+      if (mediaItems.length) {
+        return { text: rawText, mediaItems, senderName };
       }
+    }
+    const single = normalizeMedia(rawMedia);
+    if (single) {
+      return { text: rawText, media: single, senderName };
     }
     if (rawText || senderName) return { text: rawText, senderName };
   } catch {
@@ -3909,16 +4631,40 @@ const parseChatBody = (body: string | null) => {
   }
   return { text: body };
 };
-const buildChatBody = (text: string, media: ChatMedia | null, senderName?: string | null) => {
+const buildChatBody = (text: string, media: ChatMedia | ChatMedia[] | null, senderName?: string | null) => {
   const cleanSender = senderName?.trim() ?? '';
-  if (media || cleanSender) {
+  const hasMedia = Array.isArray(media) ? media.length > 0 : !!media;
+  if (hasMedia || cleanSender) {
     const payload: any = { text: text || null };
-    if (media) payload.media = media;
+    if (hasMedia) payload.media = media;
     if (cleanSender) payload.senderName = cleanSender;
     return JSON.stringify(payload);
   }
   return text;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
