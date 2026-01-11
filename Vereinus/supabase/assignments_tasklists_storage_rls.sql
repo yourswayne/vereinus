@@ -174,6 +174,25 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public'
+      AND tablename = 'assignment_submissions'
+      AND policyname = 'assignment_submissions_delete_teacher'
+  ) THEN
+    CREATE POLICY assignment_submissions_delete_teacher
+      ON public.assignment_submissions
+      FOR DELETE
+      USING (
+        EXISTS (
+          SELECT 1
+          FROM public.assignments a
+          WHERE a.id = assignment_submissions.assignment_id
+            AND public.has_org_role(a.org_id, ARRAY['director','teacher'])
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
       AND tablename = 'personal_calendar_events'
       AND policyname = 'personal_calendar_events_select_own'
   ) THEN

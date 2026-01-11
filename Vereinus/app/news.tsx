@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router';
 import { supabase, supabaseUsingFallback } from '../lib/supabase';
 
 type EventScope = 'org' | 'group' | 'user';
-type NewsCategory = 'announcement' | 'assignment' | 'exercise' | 'task' | 'event';
+type NewsCategory = 'announcement' | 'assignment' | 'exercise' | 'task' | 'event' | 'chat';
 type NewsEventType = 'new' | 'update' | 'start';
 
 type ActivityEventRow = {
@@ -76,11 +76,13 @@ const baseKindForCategory = (category: NewsCategory) => {
   if (category === 'assignment') return 'Aufgabe';
   if (category === 'exercise') return 'Übung';
   if (category === 'task') return 'Aufgabe';
+  if (category === 'chat') return 'Nachricht';
   return 'Termin';
 };
 
 const categoryLabelForEvent = (category: NewsCategory, scope: EventScope) => {
   if (category === 'task' && scope === 'user') return 'Aufgabe (Tasklist)';
+  if (category === 'chat') return 'Chat';
   return baseKindForCategory(category);
 };
 

@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable, TextInput, FlatList, Alert, ScrollView } from 'react-native';
-import { supabase } from '../lib/supabase';
-import React, { useEffect, useState } from 'react';
+import { supabase, supabaseUsingFallback } from '../lib/supabase';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 export default function Setting() {
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
@@ -20,6 +20,8 @@ export default function Setting() {
   const [inviteRole, setInviteRole] = useState<'teacher' | 'student'>('teacher');
   const [inviteDays, setInviteDays] = useState<string>('2');
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+
+  const directorReqRef = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -84,23 +86,47 @@ export default function Setting() {
   }, [sessionUserId]);
 
   // Load organisations where user is director
-  useEffect(() => {
-    (async () => {
-      if (!sessionUserId) { setDirectorOrgs([]); return; }
-      const { data: mems } = await supabase
-        .from('organisation_members')
-        .select('org_id, role')
-        .eq('user_id', sessionUserId);
-      const orgIds = (mems ?? [])
-        .filter((m: any) => m.role === 'director')
-        .map((m: any) => m.org_id);
-      if (!orgIds.length) { setDirectorOrgs([]); setSelectedOrgId(null); return; }
-      const { data: orgRows } = await supabase.from('organisations').select('id,name').in('id', orgIds);
-      const list = (orgRows ?? []) as { id: string; name: string }[];
-      setDirectorOrgs(list);
-      setSelectedOrgId((prev) => prev && list.find(o => o.id === prev) ? prev : (list[0]?.id ?? null));
-    })();
+  const refreshDirectorOrgs = useCallback(async () => {
+    const req = ++directorReqRef.current;
+    if (!sessionUserId) { setDirectorOrgs([]); setSelectedOrgId(null); return; }
+    const { data: mems } = await supabase
+      .from('organisation_members')
+      .select('org_id, role')
+      .eq('user_id', sessionUserId);
+    if (req !== directorReqRef.current) return;
+    const orgIds = (mems ?? [])
+      .filter((m: any) => m.role === "director")
+      .map((m: any) => m.org_id);
+    if (!orgIds.length) { setDirectorOrgs([]); setSelectedOrgId(null); return; }
+    const { data: orgRows } = await supabase.from('organisations').select('id,name').in('id', orgIds).order('name', { ascending: true });
+    if (req !== directorReqRef.current) return;
+    const list = (orgRows ?? []) as { id: string; name: string }[];
+    setDirectorOrgs(list);
+    setSelectedOrgId((prev) => prev && list.find((o) => o.id === prev) ? prev : (list[0]?.id ?? null));
   }, [sessionUserId]);
+
+  useEffect(() => {
+    refreshDirectorOrgs();
+  }, [refreshDirectorOrgs]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return;
+    const chan = (supabase as any).channel?.(`settings-orgs-${sessionUserId}`)
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'organisation_members', filter: `user_id=eq.${sessionUserId}` }, () => {
+        refreshDirectorOrgs();
+      })
+      ?.subscribe();
+    return () => chan?.unsubscribe?.();
+  }, [sessionUserId, supabaseUsingFallback, refreshDirectorOrgs]);
+
+  const SETTINGS_REFRESH_MS = 2000;
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return;
+    const tick = () => { refreshDirectorOrgs(); };
+    tick();
+    const id = setInterval(tick, SETTINGS_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [sessionUserId, supabaseUsingFallback, refreshDirectorOrgs]);
 
   const saveProfile = async () => {
     if (!sessionUserId || profileBusy) return;
