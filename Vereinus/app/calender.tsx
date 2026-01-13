@@ -93,7 +93,11 @@ const formatWeekRange = (start: Date) => {
 };
 const parseLocalDateOnly = (value?: string) => {
   if (!value) return null;
-  const datePart = value.split('T')[0];
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('T') || /\d{2}:\d{2}/.test(trimmed)) return null;
+  const datePart = trimmed.split(' ')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
   const [year, month, day] = datePart.split('-').map(Number);
   if (!year || !month || !day) return null;
   return new Date(year, month - 1, day);
@@ -180,9 +184,12 @@ export default function Calender() {
   const [eventModalVisible, setEventModalVisible] = useState(false);
   const [eventDraft, setEventDraft] = useState<EventDraft | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editingEventMeta, setEditingEventMeta] = useState<{ scope: 'self' | 'org'; orgId: string | null } | null>(null);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [roleByOrg, setRoleByOrg] = useState<Record<string, OrgRole>>({});
+  const directorOrgs = useMemo(() => orgs.filter((org) => roleByOrg[org.id] === 'director'), [orgs, roleByOrg]);
+  const canUseOrgScope = directorOrgs.length > 0;
   const [eventDetail, setEventDetail] = useState<CalendarEvent | null>(null);
   const [timePickerField, setTimePickerField] = useState<'start' | 'end' | null>(null);
   const [timePickerValue, setTimePickerValue] = useState(new Date());
@@ -191,12 +198,14 @@ export default function Calender() {
   const TASKLIST_STORAGE_KEY = '@vereinus/tasklists';
   const ASSIGNMENTS_STORAGE_KEY = '@vereinus/assignments';
   const handleScopeChange = (scope: EventDraft['scope']) => {
+    if (scope === 'org' && !canUseOrgScope) return;
     setEventDraft((prev) => {
       if (!prev) return prev;
       if (scope === 'self') {
         return { ...prev, scope, orgId: null };
       }
-      return { ...prev, scope };
+      const nextOrgId = prev.orgId ?? directorOrgs[0]?.id ?? null;
+      return { ...prev, scope, orgId: nextOrgId };
     });
   };
 
@@ -508,6 +517,8 @@ export default function Calender() {
         end = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), 23, 59, 59, 999);
       }
       if (!end || Number.isNaN(end.getTime())) end = new Date(start.getTime() + 60 * 60 * 1000);
+      const orgId = payload.orgId ?? row.org_id ?? null;
+      const canEditOrgEvent = !!payload.id && !isAnnouncement && !!orgId && roleByOrg[orgId] === 'director';
       const baseId = payload.id ?? `remote-${row.id}`;
       const event: CalendarEvent = {
         id: baseId,
@@ -515,15 +526,15 @@ export default function Calender() {
         description: payload.description ?? '',
         start: start.toISOString(),
         end: end.toISOString(),
-        orgId: payload.orgId ?? row.org_id ?? null,
+        orgId,
         scope: payload.scope ?? 'org',
-        readOnly: true,
+        readOnly: !canEditOrgEvent,
         source: 'remote',
       };
       eventsMap.set(baseId, event);
     });
     setRemoteEvents(Array.from(eventsMap.values()));
-  }, [orgs]);
+  }, [orgs, roleByOrg]);
 
   useEffect(() => {
     refreshRemoteEvents();
@@ -619,33 +630,36 @@ export default function Calender() {
         description: '',
         start,
         end,
-        orgId: orgs[0]?.id ?? null,
+        orgId: directorOrgs[0]?.id ?? null,
         scope: 'self',
       });
       setEditingEventId(null);
+      setEditingEventMeta(null);
       setEventDetail(null);
       setTimePickerField(null);
       setTimePickerValue(start);
       setEventModalVisible(true);
     },
-    [orgs],
+    [directorOrgs],
   );
 
   const saveEvent = useCallback(async () => {
     if (!eventDraft) return;
+    const effectiveScope = canUseOrgScope ? eventDraft.scope : 'self';
+    const effectiveOrgId = effectiveScope === 'org' ? (eventDraft.orgId ?? directorOrgs[0]?.id ?? null) : null;
     if (!eventDraft.title.trim()) {
       Alert.alert('Titel fehlt', 'Bitte gib dem Termin einen Titel.');
       return;
     }
-    if (eventDraft.scope === 'org' && eventDraft.orgId && roleByOrg[eventDraft.orgId] !== 'director') {
+    if (effectiveScope === 'org' && effectiveOrgId && roleByOrg[effectiveOrgId] !== 'director') {
       Alert.alert('Keine Berechtigung', 'Nur Direktoren können Termine für den gesamten Verein veröffentlichen.');
       return;
     }
-    if (eventDraft.scope === 'org' && !eventDraft.orgId) {
+    if (effectiveScope === 'org' && !effectiveOrgId) {
       Alert.alert('Verein fehlt', 'Bitte wähle einen Verein aus.');
       return;
     }
-    if (eventDraft.scope === 'self' && !sessionUserId) {
+    if (effectiveScope === 'self' && !sessionUserId) {
       Alert.alert('Login erforderlich', 'Bitte melde dich an, um persönliche Termine zu speichern.');
       return;
     }
@@ -653,6 +667,10 @@ export default function Calender() {
       Alert.alert('Supabase offline', 'Termine koennen gerade nicht gespeichert werden.');
       return;
     }
+    const previousScope = editingEventMeta?.scope ?? null;
+    const previousOrgId = editingEventMeta?.orgId ?? null;
+    const wasEditingPersonal = !!editingEventId && previousScope === 'self';
+    const wasEditingOrg = !!editingEventId && previousScope === 'org';
     const eventId = editingEventId ?? `${Date.now()}`;
     const payload: CalendarEvent = {
       id: eventId,
@@ -660,13 +678,45 @@ export default function Calender() {
       description: eventDraft.description.trim(),
       start: eventDraft.start.toISOString(),
       end: eventDraft.end.toISOString(),
-      orgId: eventDraft.orgId,
-      scope: eventDraft.scope,
+      orgId: effectiveOrgId,
+      scope: effectiveScope,
       readOnly: false,
       source: 'local',
     };
-    if (eventDraft.scope === 'self' && sessionUserId) {
-      if (editingEventId) {
+    if (wasEditingPersonal && effectiveScope === 'org') {
+      if (!sessionUserId || !editingEventId) {
+        Alert.alert('Kalender', 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      const { error } = await supabase
+        .from('personal_calendar_events')
+        .delete()
+        .eq('id', editingEventId)
+        .eq('user_id', sessionUserId);
+      if (error) {
+        Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      setLocalEvents((prev) => prev.filter((evt) => evt.id !== editingEventId));
+    }
+    if (wasEditingOrg && effectiveScope === 'self') {
+      if (!editingEventId || !previousOrgId) {
+        Alert.alert('Kalender', 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      const { error } = await supabase
+        .from('calendar_sync_queue')
+        .delete()
+        .eq('org_id', previousOrgId)
+        .eq('event_payload->>id', editingEventId);
+      if (error) {
+        Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      refreshRemoteEvents();
+    }
+    if (effectiveScope === 'self' && sessionUserId) {
+      if (wasEditingPersonal && editingEventId) {
         const { data, error } = await supabase
           .from('personal_calendar_events')
           .update({
@@ -719,12 +769,24 @@ export default function Calender() {
     } else {
       // org scope: keep localEvents unchanged; remote fetch will refresh
     }
-    if (eventDraft.scope === 'org' && eventDraft.orgId) {
+    if (effectiveScope === 'org' && effectiveOrgId) {
+      if (wasEditingOrg && editingEventId) {
+        const orgIdForDelete = previousOrgId ?? effectiveOrgId;
+        const { error: deleteError } = await supabase
+          .from('calendar_sync_queue')
+          .delete()
+          .eq('org_id', orgIdForDelete)
+          .eq('event_payload->>id', editingEventId);
+        if (deleteError) {
+          Alert.alert('Kalender', deleteError.message ?? 'Termin konnte nicht gespeichert werden.');
+          return;
+        }
+      }
       const { error } = await supabase
         .from('calendar_sync_queue')
         .insert({
           event_payload: payload,
-          org_id: eventDraft.orgId,
+          org_id: effectiveOrgId,
         });
       if (error) {
         Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
@@ -738,7 +800,8 @@ export default function Calender() {
     setEventModalVisible(false);
     setEventDraft(null);
     setEditingEventId(null);
-  }, [editingEventId, eventDraft, roleByOrg, sessionUserId, refreshPersonalEvents, refreshRemoteEvents]);
+    setEditingEventMeta(null);
+  }, [editingEventId, editingEventMeta, eventDraft, roleByOrg, sessionUserId, canUseOrgScope, directorOrgs, refreshPersonalEvents, refreshRemoteEvents]);
 
   const upcomingEventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -776,19 +839,21 @@ export default function Calender() {
   }, []);
 
   const beginEditEvent = useCallback((event: CalendarEvent) => {
+    const nextOrgId = event.scope === 'org' ? (event.orgId ?? directorOrgs[0]?.id ?? null) : null;
     setEventDraft({
       title: event.title,
       description: event.description ?? '',
       start: new Date(event.start),
       end: new Date(event.end),
-      orgId: event.orgId ?? null,
+      orgId: nextOrgId,
       scope: event.scope,
     });
     setEditingEventId(event.id);
+    setEditingEventMeta({ scope: event.scope, orgId: event.orgId ?? null });
     setTimePickerField(null);
     setTimePickerValue(new Date(event.start));
     setEventModalVisible(true);
-  }, []);
+  }, [directorOrgs]);
 
   const handleEditFromDetail = useCallback(() => {
     if (!eventDetail || eventDetail.readOnly) return;
@@ -819,12 +884,21 @@ export default function Calender() {
         Alert.alert('Keine Berechtigung', 'Nur Direktoren können Vereins-Termine löschen.');
         return false;
       }
+      const payloadId = evt.id && !evt.id.startsWith('remote-') ? evt.id : null;
+      if (!payloadId) {
+        Alert.alert('Fehler', 'Termin konnte nicht gel”scht werden.');
+        return false;
+      }
       try {
-        await supabase
+        const { error } = await supabase
           .from('calendar_sync_queue')
           .delete()
           .eq('org_id', evt.orgId)
-          .or(`event_payload->>id.eq.${evt.id}`);
+          .eq('event_payload->>id', payloadId);
+        if (error) {
+          Alert.alert('Fehler', 'Termin konnte nicht gel”scht werden.');
+          return false;
+        }
         refreshRemoteEvents();
         return true;
       } catch {
@@ -839,6 +913,7 @@ export default function Calender() {
     setEventModalVisible(false);
     setEventDraft(null);
     setEditingEventId(null);
+    setEditingEventMeta(null);
     setTimePickerField(null);
   }, []);
 
@@ -1287,50 +1362,54 @@ export default function Calender() {
                 </View>
               </View>
             )}
-            <View style={styles.scopeRow}>
-              <Text style={styles.timeInputLabel}>Sichtbarkeit</Text>
-              <View style={styles.scopePills}>
-                {[
-                  { key: 'self', label: 'Nur ich' },
-                  { key: 'org', label: 'Verein' },
-                ].map((scope) => (
-                  <Pressable
-                    key={scope.key}
-                    style={[styles.scopeChip, eventDraft?.scope === scope.key && styles.scopeChipActive]}
-                    onPress={() => handleScopeChange(scope.key as EventDraft['scope'])}
-                  >
-                    <Text
-                      style={[styles.scopeChipText, eventDraft?.scope === scope.key && styles.scopeChipTextActive]}
-                    >
-                      {scope.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-            
-            {eventDraft?.scope === 'org' && orgs.length > 0 && (
-              <View style={styles.orgPickerSection}>
-                <Text style={styles.timeInputLabel}>Verein</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.orgChipsRow}>
-                  {orgs.map((org) => (
-                    <Pressable
-                      key={org.id}
-                      style={[styles.orgChip, eventDraft?.orgId === org.id && styles.orgChipActive]}
-                      onPress={() => setEventDraft((prev) => (prev ? { ...prev, orgId: org.id } : prev))}
-                    >
-                      <Text
-                        style={[styles.orgChipText, eventDraft?.orgId === org.id && styles.orgChipTextActive]}
+            {canUseOrgScope && (
+              <>
+                <View style={styles.scopeRow}>
+                  <Text style={styles.timeInputLabel}>Sichtbarkeit</Text>
+                  <View style={styles.scopePills}>
+                    {[
+                      { key: 'self', label: 'Nur ich' },
+                      { key: 'org', label: 'Verein' },
+                    ].map((scope) => (
+                      <Pressable
+                        key={scope.key}
+                        style={[styles.scopeChip, eventDraft?.scope === scope.key && styles.scopeChipActive]}
+                        onPress={() => handleScopeChange(scope.key as EventDraft['scope'])}
                       >
-                        {org.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <Text style={[styles.broadcastLabel, { marginTop: 8 }]}>
-                  Termin wird automatisch mit dem Verein geteilt.
-                </Text>
-              </View>
+                        <Text
+                          style={[styles.scopeChipText, eventDraft?.scope === scope.key && styles.scopeChipTextActive]}
+                        >
+                          {scope.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                {eventDraft?.scope === 'org' && directorOrgs.length > 0 && (
+                  <View style={styles.orgPickerSection}>
+                    <Text style={styles.timeInputLabel}>Verein</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.orgChipsRow}>
+                      {directorOrgs.map((org) => (
+                        <Pressable
+                          key={org.id}
+                          style={[styles.orgChip, eventDraft?.orgId === org.id && styles.orgChipActive]}
+                          onPress={() => setEventDraft((prev) => (prev ? { ...prev, orgId: org.id } : prev))}
+                        >
+                          <Text
+                            style={[styles.orgChipText, eventDraft?.orgId === org.id && styles.orgChipTextActive]}
+                          >
+                            {org.name}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    <Text style={[styles.broadcastLabel, { marginTop: 8 }]}>
+                      Termin wird automatisch mit dem Verein geteilt.
+                    </Text>
+                  </View>
+                )}
+              </>
             )}
 
 
@@ -1338,7 +1417,7 @@ export default function Calender() {
             
 
 
-            <View style={styles.modalButtonsRow}>
+            <View style={[styles.modalButtonsRow, !canUseOrgScope && styles.modalButtonsRowSpaced]}>
               <TouchableOpacity style={styles.modalCancelButton} onPress={closeEventModal}>
                 <Text style={styles.modalCancelText}>Abbrechen</Text>
               </TouchableOpacity>
@@ -1829,6 +1908,9 @@ const styles = StyleSheet.create({
   modalButtonsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+  },
+  modalButtonsRowSpaced: {
+    marginTop: 12,
   },
   modalSaveButton: {
     backgroundColor: '#1c9a93',

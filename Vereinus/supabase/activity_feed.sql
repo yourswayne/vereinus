@@ -833,6 +833,30 @@ create trigger messages_activity
 after insert on public.messages
 for each row execute function public.tg_message_activity();
 
+-- Ensure personal_calendar_events has an "end" column (used by triggers + app).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'personal_calendar_events'
+      AND column_name = 'end'
+  ) THEN
+    ALTER TABLE public.personal_calendar_events ADD COLUMN "end" timestamptz;
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'personal_calendar_events'
+        AND column_name = 'end_at'
+    ) THEN
+      EXECUTE 'UPDATE public.personal_calendar_events SET "end" = end_at WHERE "end" IS NULL';
+    END IF;
+  END IF;
+END
+$$;
+
 -- Personal calendar events -> start events.
 create or replace function public.tg_personal_calendar_activity()
 returns trigger
@@ -864,7 +888,7 @@ begin
       new.title,
       new.title,
       v_start,
-      jsonb_build_object('end', new.end)
+      jsonb_build_object('end', new."end")
     );
   end if;
   return new;

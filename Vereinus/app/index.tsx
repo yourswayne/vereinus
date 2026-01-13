@@ -1,6 +1,6 @@
-﻿import { View, Text, StyleSheet, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView, AppState } from 'react-native';
+import { View, Text, StyleSheet, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView, AppState } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import type { TextStyle, StyleProp, ViewStyle } from 'react-native';
+import type { ImageStyle, TextStyle, StyleProp, ViewStyle } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GestureResponderEvent } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -111,7 +111,7 @@ type PendingUpload = {
   name?: string | null;
   mimeType?: string | null;
 };
-type MediaPickerTarget = 'chat' | 'exercise' | 'assignment' | 'submission';
+type MediaPickerTarget = 'chat' | 'exercise' | 'assignment' | 'submission' | 'group' | 'org';
 
 type InlineVideoProps = {
   uri: string;
@@ -148,6 +148,7 @@ export default function Home() {
   const navigation = useNavigation<BottomTabNavigationProp<any>>();
   const insets = useSafeAreaInsets();
   const containerPaddings = { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 };
+  const homePaddings = { paddingTop: insets.top , paddingBottom: insets.bottom + 100 };
   // Chat messages (remote)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageUserNames, setMessageUserNames] = useState<Record<string, string>>({});
@@ -159,7 +160,7 @@ export default function Home() {
   const chatMediaUrlCacheRef = useRef<Record<string, string>>({});
   const chatSeenByGroupRef = useRef<Record<string, string>>({});
   const groupByChannelRef = useRef<Record<string, string>>({});
-  const chatModeRef = useRef<'pick' | 'in'>('pick');
+  const chatModeRef = useRef<'pick' | 'in' | 'info'>('pick');
   const screenRef = useRef<Screen>('home');
   const [fullScreenMedia, setFullScreenMedia] = useState<ChatMedia | null>(null);
   // Chat input auto-grow up to a limit, then scroll
@@ -241,7 +242,7 @@ export default function Home() {
   const [newOrgName, setNewOrgName] = useState('');
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  const [chatMode, setChatMode] = useState<'pick' | 'in'>('pick');
+  const [chatMode, setChatMode] = useState<'pick' | 'in' | 'info'>('pick');
   const [seenAnnouncementsAt, setSeenAnnouncementsAt] = useState<string | null>(null);
   const [seenExercisesAt, setSeenExercisesAt] = useState<string | null>(null);
   const [seenAssignmentsAt, setSeenAssignmentsAt] = useState<string | null>(null);
@@ -304,12 +305,17 @@ export default function Home() {
   const annReqRef = useRef(0);
 
   const currentOrg = useMemo(() => orgs.find((o) => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
+  const selectedGroup = useMemo(
+    () => groups.find((g) => g.id === selectedGroupId) ?? null,
+    [groups, selectedGroupId],
+  );
   const roleLabel = useMemo(() => {
     if (orgRole === 'director') return 'Direktor';
     if (orgRole === 'teacher') return 'Lehrer';
     if (orgRole === 'student') return 'Schüler';
     return null;
   }, [orgRole]);
+  const canEditGroupMedia = orgRole === 'director' || orgRole === 'teacher';
   const canCreateAnnouncement = useMemo(() => {
     return !!(sessionUserId && orgRole === 'director' && selectedOrgId);
   }, [sessionUserId, orgRole, selectedOrgId]);
@@ -515,11 +521,14 @@ export default function Home() {
 
   useEffect(() => {
     if (supabaseUsingFallback || !supabaseUrl || !(supabase as any).storage) return;
-    const pending = messages
-      .flatMap((m) => {
+    const pending = [
+      ...messages.flatMap((m) => {
         if (m.mediaItems?.length) return m.mediaItems.map((item) => item.url).filter(Boolean);
         return m.mediaUrl ? [m.mediaUrl] : [];
-      })
+      }),
+      ...groups.map((g) => g.image_url).filter(Boolean),
+      ...(currentOrg?.logo_url ? [currentOrg.logo_url] : []),
+    ]
       .filter((url): url is string => !!url)
       .filter((url) => !chatMediaUrlCacheRef.current[url]);
     if (!pending.length) return;
@@ -538,7 +547,7 @@ export default function Home() {
       }));
     })();
     return () => { cancelled = true; };
-  }, [messages, supabaseUsingFallback, supabaseUrl, getChatMediaPathFromUrl, CHAT_MEDIA_BUCKET]);
+  }, [messages, groups, currentOrg, supabaseUsingFallback, supabaseUrl, getChatMediaPathFromUrl, CHAT_MEDIA_BUCKET]);
 
   useEffect(() => {
     if (!selectedOrgId || supabaseUsingFallback) return;
@@ -676,6 +685,22 @@ export default function Home() {
 
     return () => { chan?.unsubscribe?.(); };
   }, [sessionUserId, supabaseUsingFallback, refreshOrgsAndGroups, selectedOrgId]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    const chan = (supabase as any).channel?.(`org-updates-${selectedOrgId}`)
+      ?.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'organisations', filter: `id=eq.${selectedOrgId}` }, (payload: any) => {
+        const updated = payload?.new as { id?: string; name?: string | null; logo_url?: string | null } | undefined;
+        if (!updated?.id) return;
+        setOrgs((prev) => prev.map((o) => (
+          o.id === updated.id
+            ? { ...o, name: updated.name ?? o.name, logo_url: updated.logo_url ?? null }
+            : o
+        )));
+      })
+      ?.subscribe();
+    return () => { chan?.unsubscribe?.(); };
+  }, [selectedOrgId, supabaseUsingFallback]);
 
   useEffect(() => {
     if (supabaseUsingFallback || !sessionUserId || !selectedOrgId) return;
@@ -1166,6 +1191,13 @@ export default function Home() {
       const groupSegment = selectedGroupId ?? 'group';
       return `${orgSegment}/${groupSegment}/${fileName}`;
     }
+    if (target === 'group') {
+      const groupSegment = selectedGroupId ?? 'group';
+      return `${orgSegment}/groups/${groupSegment}/${fileName}`;
+    }
+    if (target === 'org') {
+      return `${orgSegment}/org/${fileName}`;
+    }
     if (target === 'exercise') return `${orgSegment}/exercises/${fileName}`;
     if (target === 'assignment') return `${orgSegment}/assignments/${fileName}`;
     return `${orgSegment}/submissions/${fileName}`;
@@ -1184,7 +1216,7 @@ export default function Home() {
     if (!accessToken) {
       throw new Error('Nicht angemeldet');
     }
-    const bucket = target === 'chat' ? CHAT_MEDIA_BUCKET : ATTACHMENTS_BUCKET;
+    const bucket = target === 'chat' || target === 'group' || target === 'org' ? CHAT_MEDIA_BUCKET : ATTACHMENTS_BUCKET;
     const kind = upload.kind ?? resolveMediaKind(upload.mimeType, upload.name, upload.uri);
     const fileName = buildUploadFileName({ ...upload, kind });
     const path = buildStoragePath(target, fileName);
@@ -1221,6 +1253,44 @@ export default function Home() {
     };
   };
 
+  const applyGroupImage = async (groupId: string, imageUrl: string | null) => {
+    if (!groupId) return;
+    if (supabaseUsingFallback) {
+      setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, image_url: imageUrl } : g)));
+      return;
+    }
+    const { data, error } = await supabase
+      .from('groups')
+      .update({ image_url: imageUrl })
+      .eq('id', groupId)
+      .select('id, image_url');
+    if (error) throw error;
+    if (!data || !data.length) {
+      throw new Error('Gruppenbild konnte nicht gespeichert werden.');
+    }
+    const updated = data[0] as { id: string; image_url: string | null };
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, image_url: updated.image_url ?? null } : g)));
+  };
+
+  const applyOrgLogo = async (orgId: string, logoUrl: string | null) => {
+    if (!orgId) return;
+    if (supabaseUsingFallback) {
+      setOrgs((prev) => prev.map((o) => (o.id === orgId ? { ...o, logo_url: logoUrl } : o)));
+      return;
+    }
+    const { data, error } = await supabase
+      .from('organisations')
+      .update({ logo_url: logoUrl })
+      .eq('id', orgId)
+      .select('id, logo_url');
+    if (error) throw error;
+    if (!data || !data.length) {
+      throw new Error('Vereinslogo konnte nicht gespeichert werden.');
+    }
+    const updated = data[0] as { id: string; logo_url: string | null };
+    setOrgs((prev) => prev.map((o) => (o.id === orgId ? { ...o, logo_url: updated.logo_url ?? null } : o)));
+  };
+
   const handlePickedUploads = async (uploads: PendingUpload[], target: MediaPickerTarget) => {
     if (!uploads.length) return;
     if (target === 'chat') {
@@ -1242,7 +1312,45 @@ export default function Home() {
     }
     setMediaUploadBusy(true);
     try {
-      if (target === 'exercise') {
+      if (target === 'group') {
+        if (!selectedGroupId) throw new Error('Keine Gruppe ausgewaehlt.');
+        const first = uploads[0];
+        if (first.kind !== 'image') throw new Error('Bitte ein Bild wählen.');
+        const previousImage = selectedGroup?.image_url ?? null;
+        const uploaded = await uploadAttachment(first, target);
+        await applyGroupImage(selectedGroupId, uploaded.url);
+        if (previousImage && previousImage !== uploaded.url) {
+          const prevPath = getChatMediaPathFromUrl(previousImage);
+          if (prevPath) {
+            await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([prevPath]);
+            setChatMediaUrlCache((prev) => {
+              if (!prev[previousImage]) return prev;
+              const next = { ...prev };
+              delete next[previousImage];
+              return next;
+            });
+          }
+        }
+      } else if (target === 'org') {
+        if (!selectedOrgId) throw new Error('Kein Verein ausgewaehlt.');
+        const first = uploads[0];
+        if (first.kind !== 'image') throw new Error('Bitte ein Bild wählen.');
+        const previousLogo = currentOrg?.logo_url ?? null;
+        const uploaded = await uploadAttachment(first, target);
+        await applyOrgLogo(selectedOrgId, uploaded.url);
+        if (previousLogo && previousLogo !== uploaded.url) {
+          const prevPath = getChatMediaPathFromUrl(previousLogo);
+          if (prevPath) {
+            await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([prevPath]);
+            setChatMediaUrlCache((prev) => {
+              if (!prev[previousLogo]) return prev;
+              const next = { ...prev };
+              delete next[previousLogo];
+              return next;
+            });
+          }
+        }
+      } else if (target === 'exercise') {
         const uploaded = await Promise.all(uploads.map((item) => uploadAttachment(item, target)));
         const next = uploaded.map((item) => ({
           id: uid(),
@@ -1270,6 +1378,68 @@ export default function Home() {
     }
   };
 
+  const handleRemoveGroupImage = async () => {
+    if (!selectedGroupId) return;
+    if (supabaseUsingFallback || !supabaseUrl || !supabaseAnonKey) {
+      Alert.alert('Supabase offline', 'Gruppenbild kann nicht entfernt werden.');
+      return;
+    }
+    const imageUrl = selectedGroup?.image_url ?? null;
+    setMediaUploadBusy(true);
+    try {
+      if (imageUrl) {
+        const path = getChatMediaPathFromUrl(imageUrl);
+        if (!path) {
+          throw new Error('Gruppenbild konnte im Speicher nicht gefunden werden.');
+        }
+        const { error } = await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([path]);
+        if (error) throw error;
+        setChatMediaUrlCache((prev) => {
+          if (!prev[imageUrl]) return prev;
+          const next = { ...prev };
+          delete next[imageUrl];
+          return next;
+        });
+      }
+      await applyGroupImage(selectedGroupId, null);
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Gruppenbild konnte nicht entfernt werden.');
+    } finally {
+      setMediaUploadBusy(false);
+    }
+  };
+
+  const handleRemoveOrgLogo = async () => {
+    if (!selectedOrgId) return;
+    if (supabaseUsingFallback || !supabaseUrl || !supabaseAnonKey) {
+      Alert.alert('Supabase offline', 'Vereinslogo kann nicht entfernt werden.');
+      return;
+    }
+    const logoUrl = currentOrg?.logo_url ?? null;
+    setMediaUploadBusy(true);
+    try {
+      if (logoUrl) {
+        const path = getChatMediaPathFromUrl(logoUrl);
+        if (!path) {
+          throw new Error('Vereinslogo konnte im Speicher nicht gefunden werden.');
+        }
+        const { error } = await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([path]);
+        if (error) throw error;
+        setChatMediaUrlCache((prev) => {
+          if (!prev[logoUrl]) return prev;
+          const next = { ...prev };
+          delete next[logoUrl];
+          return next;
+        });
+      }
+      await applyOrgLogo(selectedOrgId, null);
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Vereinslogo konnte nicht entfernt werden.');
+    } finally {
+      setMediaUploadBusy(false);
+    }
+  };
+
   const waitForPickerDismiss = async () => {
     Keyboard.dismiss();
     await new Promise((resolve) => setTimeout(resolve, 400));
@@ -1288,7 +1458,7 @@ export default function Home() {
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        mediaTypes: (target === 'group' || target === 'org' ? ['images'] : ['images', 'videos']) as ImagePicker.MediaType[],
         quality: 0.8,
       });
       if (result.canceled) {
@@ -1318,8 +1488,13 @@ export default function Home() {
     setShowMediaModal(false);
     await waitForPickerDismiss();
     try {
-      const allowMultiple = target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission';
-      const res = await DocumentPicker.getDocumentAsync({ multiple: allowMultiple, copyToCacheDirectory: true, type: '*/*' });
+      const isImageOnly = target === 'group' || target === 'org';
+      const allowMultiple = !isImageOnly && (target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission');
+      const res = await DocumentPicker.getDocumentAsync({
+        multiple: allowMultiple,
+        copyToCacheDirectory: true,
+        type: isImageOnly ? 'image/*' : '*/*',
+      });
       if ((res as any).canceled || (res as any).type === 'cancel') {
         setShowMediaModal(true);
         return;
@@ -1361,7 +1536,7 @@ export default function Home() {
       }
       const allowMultiple = target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission';
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        mediaTypes: (target === 'group' || target === 'org' ? ['images'] : ['images', 'videos']) as ImagePicker.MediaType[],
         allowsMultipleSelection: allowMultiple,
         quality: 0.8,
       });
@@ -2842,12 +3017,77 @@ export default function Home() {
     goBackToAssignmentList();
   };
 
+  const getGroupInitials = (name?: string | null) => {
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) return 'G';
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
 
+  const resolveChatMediaUrl = (url?: string | null) => {
+    if (!url) return null;
+    if (supabaseUsingFallback) return url;
+    const path = getChatMediaPathFromUrl(url);
+    if (path) return chatMediaUrlCache[url] ?? url;
+    return url;
+  };
 
-  const renderMediaPickerCard = () => (
+  const renderGroupAvatar = (
+    name: string | null | undefined,
+    imageUrl: string | null | undefined,
+    size: number,
+    extraStyle?: StyleProp<ViewStyle>,
+  ) => {
+    const baseStyle = { width: size, height: size, borderRadius: size / 2 };
+    const resolvedUrl = resolveChatMediaUrl(imageUrl ?? null);
+    if (resolvedUrl) {
+      return (
+        <Image
+          source={{ uri: resolvedUrl }}
+          style={[styles.groupAvatar, baseStyle, extraStyle as StyleProp<ImageStyle>]}
+          resizeMode="cover"
+        />
+      );
+    }
+    return (
+      <View style={[styles.groupAvatar, styles.groupAvatarPlaceholder, baseStyle, extraStyle]}>
+        <Text style={[styles.groupAvatarText, { fontSize: Math.max(12, Math.round(size * 0.35)) }]}>
+          {getGroupInitials(name)}
+        </Text>
+      </View>
+    );
+  };
+
+  const renderOrgLogo = (name?: string | null, logoUrl?: string | null) => {
+    const resolvedUrl = resolveChatMediaUrl(logoUrl ?? null);
+    if (resolvedUrl) {
+      return (
+        <Image
+          source={{ uri: resolvedUrl }}
+          style={styles.orgLogoImage}
+          resizeMode="contain"
+        />
+      );
+    }
+    return (
+      <View style={[styles.orgLogoImage, styles.orgLogoPlaceholder]}>
+        <Text style={styles.orgLogoText}>{getGroupInitials(name ?? null)}</Text>
+      </View>
+    );
+  };
+
+  const isMediaImageOnly = mediaPickerTarget === 'group' || mediaPickerTarget === 'org';
+
+  const renderMediaPickerCard = () => {
+    const isOrgDirector = currentOrg?.id ? orgRoles[currentOrg.id] === 'director' : false;
+    const canRemoveOrgLogo = mediaPickerTarget === 'org' && isOrgDirector && !!currentOrg?.logo_url;
+    const canRemoveGroupImage = mediaPickerTarget === 'group' && canEditGroupMedia && !!selectedGroup?.image_url;
+    const showRemoveButton = canRemoveOrgLogo || canRemoveGroupImage;
+    return (
     <View style={[styles.modalCard, styles.orgModalCard]}>
       <View style={{ padding: 12 }}>
-        <Text style={styles.sectionTitle}>Datei hinzufügen</Text>
+        <Text style={styles.sectionTitle}>{isMediaImageOnly ? 'Bild hinzufügen' : 'Datei hinzufügen'}</Text>
         <TouchableOpacity
           onPress={pickFromCamera}
           style={[styles.attachmentButton, { marginTop: 8 }, mediaUploadBusy && { opacity: 0.6 }]}
@@ -2869,7 +3109,34 @@ export default function Home() {
         >
           <Text style={styles.attachmentButtonText}>Aus Dateien wählen</Text>
         </TouchableOpacity>
-        {mediaPickerTarget === 'exercise' && (
+        {showRemoveButton && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionButtonDanger, mediaUploadBusy && styles.actionButtonDisabled, { marginTop: 12 }]}
+            disabled={mediaUploadBusy}
+            onPress={() => {
+              const message = mediaPickerTarget === 'org'
+                ? 'Soll das Vereinslogo entfernt werden?'
+                : 'Soll das Gruppenbild entfernt werden?';
+              Alert.alert('Bild entfernen', message, [
+                { text: 'Abbrechen', style: 'cancel' },
+                {
+                  text: 'Entfernen',
+                  style: 'destructive',
+                  onPress: () => {
+                    closeMediaPicker();
+                    if (mediaPickerTarget === 'org') {
+                      handleRemoveOrgLogo();
+                    } else {
+                      handleRemoveGroupImage();
+                    }
+                  },
+                },
+              ]);
+            }}
+          >
+            <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Bild entfernen</Text>
+          </TouchableOpacity>
+        )}{mediaPickerTarget === 'exercise' && (
           <>
             <Text style={[styles.label, styles.mediaHint]}>Oder per Link:</Text>
             <View style={styles.mediaTypeRow}>
@@ -2927,6 +3194,7 @@ export default function Home() {
       </View>
     </View>
   );
+  };
 
   const mediaPickerOverlay = showMediaModal && mediaPickerTarget !== 'exercise' ? (
     <View style={styles.mediaPickerOverlay}>
@@ -3166,12 +3434,15 @@ export default function Home() {
                   style={[styles.card, styles.groupCard]}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <Text style={{ fontWeight: '700', color: '#E5F4EF', flex: 1 }}>{item.name}</Text>
-                    {chatUnreadByGroup[item.id] > 0 && (
-                      <View style={styles.groupBadge}>
-                        <Text style={styles.groupBadgeText}>{formatBadgeCount(chatUnreadByGroup[item.id])}</Text>
-                      </View>
-                    )}
+                    {renderGroupAvatar(item.name, item.image_url ?? null, 42, styles.groupListAvatar)}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <Text style={{ fontWeight: '700', color: '#E5F4EF', flex: 1 }} numberOfLines={1}>{item.name}</Text>
+                      {chatUnreadByGroup[item.id] > 0 && (
+                        <View style={styles.groupBadge}>
+                          <Text style={styles.groupBadgeText}>{formatBadgeCount(chatUnreadByGroup[item.id])}</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   {(orgRole === 'director') && (
                     <TouchableOpacity
@@ -3303,6 +3574,43 @@ export default function Home() {
           </Modal>
         {mediaPickerOverlay}
 
+        </SafeAreaView>
+      );
+    }
+    if (chatMode === 'info') {
+      return (
+        <SafeAreaView style={[styles.container, { justifyContent: 'flex-start' }, containerPaddings]}>
+          <View style={styles.sectionDivider} />
+          <View style={[styles.chatHeader, styles.chatHeaderNoBorder]}>
+            <TouchableOpacity onPress={() => setChatMode('in')} style={[styles.headerBack, { bottom: 60 }]}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Gruppeninfo</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
+            <View style={styles.groupInfoCard}>
+              {renderGroupAvatar(selectedGroup?.name ?? '', selectedGroup?.image_url ?? null, 96, styles.groupInfoAvatar)}
+              <Text style={styles.groupInfoName} numberOfLines={2}>{selectedGroup?.name ?? 'Gruppe'}</Text>
+            </View>
+            {canEditGroupMedia && (
+              <>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonPrimary, mediaUploadBusy && styles.actionButtonDisabled]}
+                  disabled={mediaUploadBusy}
+                  onPress={() => {
+                    if (!selectedGroupId) return;
+                    openMediaPicker('group');
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>
+                    {selectedGroup?.image_url ? 'Bild ändern' : 'Bild hinzufügen'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+          {mediaPickerOverlay}
         </SafeAreaView>
       );
     }
@@ -3468,7 +3776,18 @@ export default function Home() {
             <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>{(groups.find(g => g.id === selectedGroupId)?.name) || 'Chat'}</Text>
+            <TouchableOpacity
+              style={[styles.chatHeaderTitleRow, { bottom: 60, left: 17 }]}
+              onPress={() => {
+                if (!selectedGroupId) return;
+                setChatMode('info');
+              }}
+              activeOpacity={0.85}
+              disabled={!selectedGroupId}
+            >
+              {renderGroupAvatar(selectedGroup?.name ?? '', selectedGroup?.image_url ?? null, 36, styles.chatHeaderAvatar)}
+              <Text style={[styles.title, { marginBottom: 0 }]} numberOfLines={1}>{selectedGroup?.name ?? 'Chat'}</Text>
+            </TouchableOpacity>
             <View style={{ width: 60 }} />
           </View>
           <FlatList
@@ -4239,7 +4558,23 @@ export default function Home() {
   }
   // --- Home-Screen mit Buttons ---
   return (
-    <SafeAreaView style={[styles.container, containerPaddings]}>
+    <SafeAreaView style={[styles.container, homePaddings]}>
+
+      {!!currentOrg && (
+        <View style={styles.orgLogoSection}>
+          <TouchableOpacity
+            style={styles.orgLogoWrap}
+            activeOpacity={orgRoles[currentOrg.id] === 'director' ? 0.85 : 1}
+            disabled={orgRoles[currentOrg.id] !== 'director' || mediaUploadBusy}
+            onPress={() => {
+              if (!selectedOrgId) return;
+              openMediaPicker('org');
+            }}
+          >
+            {renderOrgLogo(currentOrg.name, currentOrg.logo_url ?? null)}
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.orgHeader}>
         <TouchableOpacity
@@ -4257,7 +4592,6 @@ export default function Home() {
         )}
       </View>
       {/* Login-Button entfernt: Auth flow steht jetzt über /login */}
-
       <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
         <Text style={styles.menuBtnText}>Ankündigungen</Text>
         {unreadAnnouncementCount > 0 && (
@@ -4568,6 +4902,12 @@ const styles = StyleSheet.create({
   orgNamePressable: { flexDirection: 'row', alignItems: 'center' },
   orgNameText: { fontSize: 40, fontWeight: '800', color: '#E5F4EF' },
   orgNameIcon: { marginLeft: 6 },
+  orgLogoSection: { width: '100%', maxWidth: 720, alignItems: 'center', marginBottom: 12 },
+  orgLogoWrap: { width: 140, height: 140, borderRadius: 20, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: 8 },
+  orgLogoImage: { width: '100%', height: '100%' },
+  orgLogoPlaceholder: { backgroundColor: '#1b3746', alignItems: 'center', justifyContent: 'center' },
+  orgLogoText: { color: '#E5F4EF', fontWeight: '700', fontSize: 28 },
+  orgLogoActions: { width: '100%', maxWidth: 360 },
   roleBadge: { backgroundColor: '#194055', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6 },
   roleBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' },
   switchModalCard: { backgroundColor: '#194055', borderColor: '#194055' },
@@ -4695,6 +5035,14 @@ const styles = StyleSheet.create({
   // Cards & inputs
   card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', marginBottom: 10, backgroundColor: '#112a37', width: '100%' },
   groupCard: { flexDirection: 'row', alignItems: 'center' },
+  groupAvatar: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#0F2530', borderWidth: 1, borderColor: '#2A3E48' },
+  groupAvatarPlaceholder: { backgroundColor: '#1b3746' },
+  groupAvatarText: { color: '#E5F4EF', fontWeight: '700' },
+  groupListAvatar: { marginRight: 12 },
+  chatHeaderAvatar: { marginRight: 10 },
+  groupInfoAvatar: { marginBottom: 10 },
+  groupInfoCard: { alignItems: 'center', paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#112a37', marginBottom: 12 },
+  groupInfoName: { color: '#E5F4EF', fontSize: 18, fontWeight: '700', textAlign: 'center' },
   groupActionButton: { padding: 4, marginLeft: 12, borderRadius: 16, backgroundColor: '#1b3746' },
   groupBadge: { minWidth: 24, height: 24, borderRadius: 12, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, marginLeft: 8 },
   groupBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
@@ -4799,6 +5147,7 @@ const styles = StyleSheet.create({
   sendBtn: { paddingVertical: 14, paddingHorizontal: 16, marginLeft: 8, backgroundColor: '#194055', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.6 },
   chatHeader: { width: '100%', maxWidth: 720, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 1, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2A3E48' },
+  chatHeaderTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   chatHeaderNoBorder: { borderBottomWidth: 0 },
   chatHeaderLift: { bottom: 60 },
   sectionDivider: { width: '100%', maxWidth: 720, height: StyleSheet.hairlineWidth, backgroundColor: '#2A3E48', marginBottom: 8 },
@@ -4951,35 +5300,4 @@ const buildChatBody = (text: string, media: ChatMedia | ChatMedia[] | null, send
   }
   return text;
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

@@ -1,4 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable, TextInput, FlatList, Alert, ScrollView } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { supabase, supabaseUsingFallback } from '../lib/supabase';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -22,6 +24,15 @@ export default function Setting() {
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
 
   const directorReqRef = useRef(0);
+  const handleCopyInviteCode = useCallback(async () => {
+    if (!generatedCode) return;
+    try {
+      await Clipboard.setStringAsync(generatedCode);
+      Alert.alert('Kopiert', 'Code ist in der Zwischenablage.');
+    } catch {
+      Alert.alert('Fehler', 'Kopieren nicht moeglich.');
+    }
+  }, [generatedCode]);
 
   useEffect(() => {
     let alive = true;
@@ -338,7 +349,20 @@ export default function Setting() {
                 <TextInput style={[styles.input, { color: '#E5F4EF', borderColor: '#2A3E48', backgroundColor: '#0F2530' }]} keyboardType='number-pad' placeholder='1-2' placeholderTextColor={'#C7D2D6'} value={inviteDays} onChangeText={setInviteDays} />
 
                 {!!generatedCode && (
-                  <Text style={{ marginBottom: 8 }}>Neuer Code: <Text style={{ fontWeight: '700' }}>{generatedCode}</Text></Text>
+                  <View style={styles.inviteCodeRow}>
+                    <View style={styles.inviteCodeTextWrap}>
+                      <Text style={styles.inviteCodeLabel}>Neuer Code</Text>
+                      <Text style={styles.inviteCodeValue}>{generatedCode}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.copyButton}
+                      onPress={handleCopyInviteCode}
+                      accessibilityRole="button"
+                      accessibilityLabel="Code kopieren"
+                    >
+                      <Ionicons name="copy-outline" size={18} color="#E5F4EF" />
+                    </TouchableOpacity>
+                  </View>
                 )}
 
                 <View style={{ flexDirection: 'row' }}>
@@ -393,6 +417,11 @@ const styles = StyleSheet.create({
   badgeActive: { backgroundColor: '#194055', borderColor: '#194055' },
   badgeText: { color: '#111827', fontWeight: '600' },
   badgeTextActive: { color: '#fff', fontWeight: '700' },
+  inviteCodeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, paddingVertical: 8, paddingHorizontal: 10, borderWidth: 1, borderColor: '#2A3E48', borderRadius: 10, backgroundColor: '#0F2530' },
+  inviteCodeTextWrap: { flex: 1 },
+  inviteCodeLabel: { color: '#C7D2D6', fontSize: 12, marginBottom: 2 },
+  inviteCodeValue: { color: '#E5F4EF', fontSize: 16, fontWeight: '700', letterSpacing: 1 },
+  copyButton: { padding: 8, marginLeft: 8, borderRadius: 8, backgroundColor: '#194055', alignItems: 'center', justifyContent: 'center' },
   // modal helpers
   modalOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.2)' },
   modalCenterWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
