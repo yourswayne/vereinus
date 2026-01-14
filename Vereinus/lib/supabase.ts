@@ -22,19 +22,6 @@ if (usingFallback) {
   console.warn('[Supabase] Missing or placeholder Supabase config. Set EXPO_PUBLIC_SUPABASE_URL/EXPO_PUBLIC_SUPABASE_ANON_KEY via app.config.js or env. Using offline stub client.');
 }
 
-// Debug logs to confirm runtime values (remove or gate in production if desired)
-try {
-  // eslint-disable-next-line no-console
-  console.log('[Supabase] runtime config:', {
-    url: url ?? '<undefined>',
-    anon_present: !!anon,
-    isPlaceholderProject,
-    usingFallback,
-  });
-} catch (e) {
-  // ignore logging errors
-}
-
 function buildFallback() {
   const chain = () => {
     const makePromise = <T>(data: T) => {

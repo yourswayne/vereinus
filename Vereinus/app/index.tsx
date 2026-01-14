@@ -1,6 +1,6 @@
-﻿import { View, Text, StyleSheet, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, BackHandler, TouchableOpacity, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal, Pressable, Keyboard, Image, Alert, ScrollView, AppState } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import type { TextStyle, StyleProp, ViewStyle } from 'react-native';
+import type { ImageStyle, TextStyle, StyleProp, ViewStyle } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GestureResponderEvent } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -111,7 +111,7 @@ type PendingUpload = {
   name?: string | null;
   mimeType?: string | null;
 };
-type MediaPickerTarget = 'chat' | 'exercise' | 'assignment' | 'submission';
+type MediaPickerTarget = 'chat' | 'exercise' | 'assignment' | 'submission' | 'group' | 'org';
 
 type InlineVideoProps = {
   uri: string;
@@ -148,6 +148,7 @@ export default function Home() {
   const navigation = useNavigation<BottomTabNavigationProp<any>>();
   const insets = useSafeAreaInsets();
   const containerPaddings = { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 };
+  const homePaddings = { paddingTop: insets.top , paddingBottom: insets.bottom + 100 };
   // Chat messages (remote)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageUserNames, setMessageUserNames] = useState<Record<string, string>>({});
@@ -157,6 +158,10 @@ export default function Home() {
   const [chatUploadBusy, setChatUploadBusy] = useState(false);
   const [chatMediaUrlCache, setChatMediaUrlCache] = useState<Record<string, string>>({});
   const chatMediaUrlCacheRef = useRef<Record<string, string>>({});
+  const chatSeenByGroupRef = useRef<Record<string, string>>({});
+  const groupByChannelRef = useRef<Record<string, string>>({});
+  const chatModeRef = useRef<'pick' | 'in' | 'info'>('pick');
+  const screenRef = useRef<Screen>('home');
   const [fullScreenMedia, setFullScreenMedia] = useState<ChatMedia | null>(null);
   // Chat input auto-grow up to a limit, then scroll
   const MIN_CHAT_INPUT_HEIGHT = 56;
@@ -170,6 +175,7 @@ export default function Home() {
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<{ id: string; name: string; logo_url?: string | null }[]>([]);
   const [groups, setGroups] = useState<{ id: string; name: string; org_id: string; image_url?: string | null }[]>([]);
+  const [groupsRefreshKey, setGroupsRefreshKey] = useState(0);
   const [showSwitchHome, setShowSwitchHome] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
@@ -202,10 +208,15 @@ export default function Home() {
     setOrgMemberGroups([]);
   }, [selectedOrgId]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const selectedGroupIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedGroupIdRef.current = selectedGroupId;
+  }, [selectedGroupId]);
   const [orgRole, setOrgRole] = useState<'director' | 'teacher' | 'student' | null>(null);
   const [orgRoles, setOrgRoles] = useState<Record<string, 'director' | 'teacher' | 'student'>>({});
   const [annRemote, setAnnRemote] = useState<AnnouncementRow[]>([]);
   const [loadingRemote, setLoadingRemote] = useState(false);
+  const [annRefreshKey, setAnnRefreshKey] = useState(0);
   const [calendarSyncedAnnouncements, setCalendarSyncedAnnouncements] = useState<Record<string, boolean>>({});
   const getAnnouncementCalendarEventId = (announcementId: string) => `ann-${announcementId}`;
   const parseLocalDateOnly = (value?: string) => {
@@ -231,12 +242,21 @@ export default function Home() {
   const [newOrgName, setNewOrgName] = useState('');
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  const [chatMode, setChatMode] = useState<'pick' | 'in'>('pick');
+  const [chatMode, setChatMode] = useState<'pick' | 'in' | 'info'>('pick');
   const [seenAnnouncementsAt, setSeenAnnouncementsAt] = useState<string | null>(null);
   const [seenExercisesAt, setSeenExercisesAt] = useState<string | null>(null);
   const [seenAssignmentsAt, setSeenAssignmentsAt] = useState<string | null>(null);
   const [chatSeenByGroup, setChatSeenByGroup] = useState<Record<string, string>>({});
   const [chatUnreadByGroup, setChatUnreadByGroup] = useState<Record<string, number>>({});
+  useEffect(() => {
+    chatSeenByGroupRef.current = chatSeenByGroup;
+  }, [chatSeenByGroup]);
+  useEffect(() => {
+    chatModeRef.current = chatMode;
+  }, [chatMode]);
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
   const [showRenameGroup, setShowRenameGroup] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [renameGroupName, setRenameGroupName] = useState('');
@@ -281,14 +301,21 @@ export default function Home() {
   const [submissionNote, setSubmissionNote] = useState('');
   const [submissionAttachments, setSubmissionAttachments] = useState<string[]>([]);
   const groupsReqRef = useRef(0);
+  const prevOrgIdRef = useRef<string | null>(null);
+  const annReqRef = useRef(0);
 
   const currentOrg = useMemo(() => orgs.find((o) => o.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
+  const selectedGroup = useMemo(
+    () => groups.find((g) => g.id === selectedGroupId) ?? null,
+    [groups, selectedGroupId],
+  );
   const roleLabel = useMemo(() => {
     if (orgRole === 'director') return 'Direktor';
     if (orgRole === 'teacher') return 'Lehrer';
     if (orgRole === 'student') return 'Schüler';
     return null;
   }, [orgRole]);
+  const canEditGroupMedia = orgRole === 'director' || orgRole === 'teacher';
   const canCreateAnnouncement = useMemo(() => {
     return !!(sessionUserId && orgRole === 'director' && selectedOrgId);
   }, [sessionUserId, orgRole, selectedOrgId]);
@@ -340,6 +367,7 @@ export default function Home() {
   const [showDueDatePicker, setShowDueDatePicker] = useState(false);
   const [showDueTimePicker, setShowDueTimePicker] = useState(false);
   const [assignmentStatusFilter, setAssignmentStatusFilter] = useState<'all' | 'upcoming' | 'overdue' | 'submitted'>('all');
+  const [assignmentRefreshKey, setAssignmentRefreshKey] = useState(0);
   const assignmentSyncErrorShown = useRef(false);
   const uid = () => Math.random().toString(36).slice(2, 10);
   const uuidv4 = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -493,11 +521,14 @@ export default function Home() {
 
   useEffect(() => {
     if (supabaseUsingFallback || !supabaseUrl || !(supabase as any).storage) return;
-    const pending = messages
-      .flatMap((m) => {
+    const pending = [
+      ...messages.flatMap((m) => {
         if (m.mediaItems?.length) return m.mediaItems.map((item) => item.url).filter(Boolean);
         return m.mediaUrl ? [m.mediaUrl] : [];
-      })
+      }),
+      ...groups.map((g) => g.image_url).filter(Boolean),
+      ...(currentOrg?.logo_url ? [currentOrg.logo_url] : []),
+    ]
       .filter((url): url is string => !!url)
       .filter((url) => !chatMediaUrlCacheRef.current[url]);
     if (!pending.length) return;
@@ -516,7 +547,7 @@ export default function Home() {
       }));
     })();
     return () => { cancelled = true; };
-  }, [messages, supabaseUsingFallback, supabaseUrl, getChatMediaPathFromUrl, CHAT_MEDIA_BUCKET]);
+  }, [messages, groups, currentOrg, supabaseUsingFallback, supabaseUrl, getChatMediaPathFromUrl, CHAT_MEDIA_BUCKET]);
 
   useEffect(() => {
     if (!selectedOrgId || supabaseUsingFallback) return;
@@ -578,7 +609,7 @@ export default function Home() {
       }
     })();
   }, [sessionUserId]);
-  const refreshOrgsAndGroups = async () => {
+  const refreshOrgsAndGroups = useCallback(async () => {
     if (!sessionUserId) {
       setOrgs([]); setGroups([]); setSelectedOrgId(null); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({}); setAnnRemote([]);
       return;
@@ -586,7 +617,10 @@ export default function Home() {
     const { data: mems } = await supabase.from('organisation_members').select('org_id, role').eq('user_id', sessionUserId);
     const memsTyped = (mems ?? []) as { org_id: string; role: 'director' | 'teacher' | 'student' }[];
     const orgIds = memsTyped.map(m => m.org_id);
-    if (!orgIds.length) { setOrgs([]); setSelectedOrgId(null); setGroups([]); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({}); return; }
+    if (!orgIds.length) {
+      setOrgs([]); setSelectedOrgId(null); setGroups([]); setSelectedGroupId(null); setOrgRole(null); setOrgRoles({});
+      return;
+    }
     const { data: orgRows } = await supabase.from('organisations').select('id, name, logo_url').in('id', orgIds);
     const orgList = (orgRows ?? []) as any[];
     setOrgs(orgList);
@@ -606,7 +640,113 @@ export default function Home() {
     } else {
       setGroups([]); setSelectedGroupId(null);
     }
-  };
+  }, [sessionUserId, selectedOrgId]);
+
+  // Realtime: listen for organisation membership changes for the current user
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return;
+    const chan = (supabase as any).channel?.(`org-sync-${sessionUserId}`)
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'organisation_members', filter: `user_id=eq.${sessionUserId}` }, (payload: any) => {
+        // refresh local orgs/groups when membership for this user changes
+        refreshOrgsAndGroups();
+      })
+      // also watch for org deletions so we can remove the org immediately
+      ?.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'organisations' }, (payload: any) => {
+        const deletedId = payload.old?.id as string | undefined;
+        if (deletedId) {
+          // remove from local list and notify user if they were a member
+          setOrgs((prev) => {
+            const existed = prev.some((o) => o.id === deletedId);
+            const next = prev.filter((o) => o.id !== deletedId);
+            if (existed) {
+              try {
+                Alert.alert('Verein entfernt', 'Dieser Verein wurde gelöscht oder du wurdest entfernt.');
+              } catch {
+              }
+            }
+            return next;
+          });
+
+          // if the deleted org was selected, clear selection and related state
+          setSelectedOrgId((prev) => {
+            if (prev === deletedId) {
+              setGroups([]);
+              setSelectedGroupId(null);
+              setChatChannelId(null);
+              setChatMode('pick');
+              return null;
+            }
+            return prev;
+          });
+        }
+        refreshOrgsAndGroups();
+      })
+      ?.subscribe();
+
+    return () => { chan?.unsubscribe?.(); };
+  }, [sessionUserId, supabaseUsingFallback, refreshOrgsAndGroups, selectedOrgId]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    const chan = (supabase as any).channel?.(`org-updates-${selectedOrgId}`)
+      ?.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'organisations', filter: `id=eq.${selectedOrgId}` }, (payload: any) => {
+        const updated = payload?.new as { id?: string; name?: string | null; logo_url?: string | null } | undefined;
+        if (!updated?.id) return;
+        setOrgs((prev) => prev.map((o) => (
+          o.id === updated.id
+            ? { ...o, name: updated.name ?? o.name, logo_url: updated.logo_url ?? null }
+            : o
+        )));
+      })
+      ?.subscribe();
+    return () => { chan?.unsubscribe?.(); };
+  }, [selectedOrgId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId || !selectedOrgId) return;
+    const chan = (supabase as any).channel?.(`groups-sync-${selectedOrgId}-${sessionUserId}`)
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'groups', filter: `org_id=eq.${selectedOrgId}` }, () => {
+        setGroupsRefreshKey((prev) => prev + 1);
+      })
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'group_members', filter: `user_id=eq.${sessionUserId}` }, () => {
+        setGroupsRefreshKey((prev) => prev + 1);
+      })
+      ?.subscribe();
+    return () => { chan?.unsubscribe?.(); };
+  }, [selectedOrgId, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    const chan = (supabase as any).channel?.(`announcements-${selectedOrgId}`)
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'announcements', filter: `org_id=eq.${selectedOrgId}` }, () => {
+        setAnnRefreshKey((prev) => prev + 1);
+      })
+      ?.subscribe();
+    return () => { chan?.unsubscribe?.(); };
+  }, [selectedOrgId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    const chan = (supabase as any).channel?.(`assignments-${selectedOrgId}`)
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'assignments', filter: `org_id=eq.${selectedOrgId}` }, () => {
+        setAssignmentRefreshKey((prev) => prev + 1);
+      })
+      ?.subscribe();
+    return () => { chan?.unsubscribe?.(); };
+  }, [selectedOrgId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    const ids = assignments.map((a) => a.id).filter(Boolean);
+    if (!ids.length) return;
+    const filter = `assignment_id=in.(${ids.join(',')})`;
+    const chan = (supabase as any).channel?.(`assignment-subs-${selectedOrgId}`)
+      ?.on('postgres_changes', { event: '*', schema: 'public', table: 'assignment_submissions', filter }, () => {
+        setAssignmentRefreshKey((prev) => prev + 1);
+      })
+      ?.subscribe();
+    return () => { chan?.unsubscribe?.(); };
+  }, [assignments, selectedOrgId, supabaseUsingFallback]);
 
   useEffect(() => {
       let alive = true;
@@ -646,6 +786,86 @@ export default function Home() {
     useEffect(() => {
     AsyncStorage.setItem(exerciseStorageKey, JSON.stringify(exercises)).catch(() => { });
   }, [exercises, exerciseStorageKey]);
+
+  // Realtime subscription: keep exercises in sync across clients
+  useEffect(() => {
+    if (supabaseUsingFallback || !selectedOrgId) return;
+    const chan = (supabase as any).channel?.(`exercises-org-${selectedOrgId}`)
+      ?.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'exercises', filter: `org_id=eq.${selectedOrgId}` }, (payload: any) => {
+        try {
+          const mapped = mapExerciseRow(payload.new);
+          setExercises((prev) => sortExercises(mergeById(prev, [mapped])));
+        } catch (e) {
+          console.warn('Failed to map exercise INSERT payload', e);
+        }
+      })
+      ?.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'exercises', filter: `org_id=eq.${selectedOrgId}` }, (payload: any) => {
+        try {
+          const mapped = mapExerciseRow(payload.new);
+          setExercises((prev) => sortExercises(prev.map((ex) => (ex.id === mapped.id ? mapped : ex))));
+        } catch (e) {
+          console.warn('Failed to map exercise UPDATE payload', e);
+        }
+      })
+      ?.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'exercises', filter: `org_id=eq.${selectedOrgId}` }, (payload: any) => {
+        const oldId = payload.old?.id as string | undefined;
+        if (!oldId) return;
+        setExercises((prev) => prev.filter((ex) => ex.id !== oldId));
+      })
+      // backup: subscribe for DELETE events without filter to catch deletes that miss the org filter
+      ?.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'exercises' }, (payload: any) => {
+        const oldId = payload.old?.id as string | undefined;
+        if (!oldId) return;
+        setExercises((prev) => prev.filter((ex) => ex.id !== oldId));
+      })
+      ?.subscribe();
+
+    return () => { chan?.unsubscribe?.(); };
+  }, [selectedOrgId, supabaseUsingFallback]);
+
+  // --- Exercises: manual refresh on screen focus or app resume as a fallback ---
+  const lastExerciseRefreshRef = useRef<number>(0);
+  const refreshExercises = useCallback(async (force = false) => {
+    if (supabaseUsingFallback || !selectedOrgId || !sessionUserId) return;
+    const now = Date.now();
+    if (!force && now - lastExerciseRefreshRef.current < 5000) return; // throttle
+    lastExerciseRefreshRef.current = now;
+    try {
+      const { data, error } = await supabase
+        .from('exercises')
+        .select('id, org_id, group_id, title, description, attachments, text_styles, created_at, updated_at')
+        .eq('org_id', selectedOrgId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const remoteExercises = (data ?? []).map((row: any) => mapExerciseRow(row));
+      setExercises((prev) => {
+        const merged = sortExercises(mergeById(prev, remoteExercises));
+        AsyncStorage.setItem(exerciseStorageKey, JSON.stringify(merged)).catch(() => { });
+        return merged;
+      });
+    } catch (e) {
+      console.warn('[exercises][refresh] failed', e);
+    }
+  }, [selectedOrgId, sessionUserId, supabaseUsingFallback, exerciseStorageKey]);
+
+  // Refresh when user opens the Übungen screen
+  useEffect(() => {
+    if (screen === 'uebungen') {
+      refreshExercises(true);
+    }
+  }, [screen, refreshExercises]);
+
+  // Refresh when app comes to foreground
+  useEffect(() => {
+    const handler = (nextState: any) => {
+      if (nextState === 'active') {
+        refreshExercises();
+        setAssignmentRefreshKey((prev) => prev + 1);
+      }
+    };
+    const sub = AppState.addEventListener ? AppState.addEventListener('change', handler) : null as any;
+    return () => { try { sub?.remove?.(); } catch { /* ignore */ } };
+  }, [refreshExercises]);
 
   useEffect(() => {
     let alive = true;
@@ -707,14 +927,14 @@ export default function Home() {
         }
 
         if (!alive) return;
-        setAssignments(mergeById(localAssignments, remoteAssignments));
-        setAssignmentSubmissions(mergeById(localSubs, remoteSubs));
+        setAssignments(mergeById(remoteAssignments, localAssignments));
+        setAssignmentSubmissions(mergeById(remoteSubs, localSubs));
       } catch {
         // keep local state on remote load errors
       }
     })();
     return () => { alive = false; };
-  }, [assignmentStorageKey, submissionStorageKey, selectedOrgId, sessionUserId, supabaseUsingFallback]);
+  }, [assignmentStorageKey, submissionStorageKey, selectedOrgId, sessionUserId, supabaseUsingFallback, assignmentRefreshKey]);
 
   useEffect(() => {
     AsyncStorage.setItem(assignmentStorageKey, JSON.stringify(assignments)).catch(() => { });
@@ -806,6 +1026,7 @@ export default function Home() {
       AsyncStorage.setItem(buildSeenKey('chat'), JSON.stringify(next)).catch(() => { });
       return next;
     });
+    setChatUnreadByGroup((prev) => ({ ...prev, [groupId]: 0 }));
   };
 
   const resetExerciseForm = () => {
@@ -970,6 +1191,13 @@ export default function Home() {
       const groupSegment = selectedGroupId ?? 'group';
       return `${orgSegment}/${groupSegment}/${fileName}`;
     }
+    if (target === 'group') {
+      const groupSegment = selectedGroupId ?? 'group';
+      return `${orgSegment}/groups/${groupSegment}/${fileName}`;
+    }
+    if (target === 'org') {
+      return `${orgSegment}/org/${fileName}`;
+    }
     if (target === 'exercise') return `${orgSegment}/exercises/${fileName}`;
     if (target === 'assignment') return `${orgSegment}/assignments/${fileName}`;
     return `${orgSegment}/submissions/${fileName}`;
@@ -988,7 +1216,7 @@ export default function Home() {
     if (!accessToken) {
       throw new Error('Nicht angemeldet');
     }
-    const bucket = target === 'chat' ? CHAT_MEDIA_BUCKET : ATTACHMENTS_BUCKET;
+    const bucket = target === 'chat' || target === 'group' || target === 'org' ? CHAT_MEDIA_BUCKET : ATTACHMENTS_BUCKET;
     const kind = upload.kind ?? resolveMediaKind(upload.mimeType, upload.name, upload.uri);
     const fileName = buildUploadFileName({ ...upload, kind });
     const path = buildStoragePath(target, fileName);
@@ -1025,6 +1253,44 @@ export default function Home() {
     };
   };
 
+  const applyGroupImage = async (groupId: string, imageUrl: string | null) => {
+    if (!groupId) return;
+    if (supabaseUsingFallback) {
+      setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, image_url: imageUrl } : g)));
+      return;
+    }
+    const { data, error } = await supabase
+      .from('groups')
+      .update({ image_url: imageUrl })
+      .eq('id', groupId)
+      .select('id, image_url');
+    if (error) throw error;
+    if (!data || !data.length) {
+      throw new Error('Gruppenbild konnte nicht gespeichert werden.');
+    }
+    const updated = data[0] as { id: string; image_url: string | null };
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, image_url: updated.image_url ?? null } : g)));
+  };
+
+  const applyOrgLogo = async (orgId: string, logoUrl: string | null) => {
+    if (!orgId) return;
+    if (supabaseUsingFallback) {
+      setOrgs((prev) => prev.map((o) => (o.id === orgId ? { ...o, logo_url: logoUrl } : o)));
+      return;
+    }
+    const { data, error } = await supabase
+      .from('organisations')
+      .update({ logo_url: logoUrl })
+      .eq('id', orgId)
+      .select('id, logo_url');
+    if (error) throw error;
+    if (!data || !data.length) {
+      throw new Error('Vereinslogo konnte nicht gespeichert werden.');
+    }
+    const updated = data[0] as { id: string; logo_url: string | null };
+    setOrgs((prev) => prev.map((o) => (o.id === orgId ? { ...o, logo_url: updated.logo_url ?? null } : o)));
+  };
+
   const handlePickedUploads = async (uploads: PendingUpload[], target: MediaPickerTarget) => {
     if (!uploads.length) return;
     if (target === 'chat') {
@@ -1046,7 +1312,45 @@ export default function Home() {
     }
     setMediaUploadBusy(true);
     try {
-      if (target === 'exercise') {
+      if (target === 'group') {
+        if (!selectedGroupId) throw new Error('Keine Gruppe ausgewaehlt.');
+        const first = uploads[0];
+        if (first.kind !== 'image') throw new Error('Bitte ein Bild wählen.');
+        const previousImage = selectedGroup?.image_url ?? null;
+        const uploaded = await uploadAttachment(first, target);
+        await applyGroupImage(selectedGroupId, uploaded.url);
+        if (previousImage && previousImage !== uploaded.url) {
+          const prevPath = getChatMediaPathFromUrl(previousImage);
+          if (prevPath) {
+            await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([prevPath]);
+            setChatMediaUrlCache((prev) => {
+              if (!prev[previousImage]) return prev;
+              const next = { ...prev };
+              delete next[previousImage];
+              return next;
+            });
+          }
+        }
+      } else if (target === 'org') {
+        if (!selectedOrgId) throw new Error('Kein Verein ausgewaehlt.');
+        const first = uploads[0];
+        if (first.kind !== 'image') throw new Error('Bitte ein Bild wählen.');
+        const previousLogo = currentOrg?.logo_url ?? null;
+        const uploaded = await uploadAttachment(first, target);
+        await applyOrgLogo(selectedOrgId, uploaded.url);
+        if (previousLogo && previousLogo !== uploaded.url) {
+          const prevPath = getChatMediaPathFromUrl(previousLogo);
+          if (prevPath) {
+            await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([prevPath]);
+            setChatMediaUrlCache((prev) => {
+              if (!prev[previousLogo]) return prev;
+              const next = { ...prev };
+              delete next[previousLogo];
+              return next;
+            });
+          }
+        }
+      } else if (target === 'exercise') {
         const uploaded = await Promise.all(uploads.map((item) => uploadAttachment(item, target)));
         const next = uploaded.map((item) => ({
           id: uid(),
@@ -1074,6 +1378,68 @@ export default function Home() {
     }
   };
 
+  const handleRemoveGroupImage = async () => {
+    if (!selectedGroupId) return;
+    if (supabaseUsingFallback || !supabaseUrl || !supabaseAnonKey) {
+      Alert.alert('Supabase offline', 'Gruppenbild kann nicht entfernt werden.');
+      return;
+    }
+    const imageUrl = selectedGroup?.image_url ?? null;
+    setMediaUploadBusy(true);
+    try {
+      if (imageUrl) {
+        const path = getChatMediaPathFromUrl(imageUrl);
+        if (!path) {
+          throw new Error('Gruppenbild konnte im Speicher nicht gefunden werden.');
+        }
+        const { error } = await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([path]);
+        if (error) throw error;
+        setChatMediaUrlCache((prev) => {
+          if (!prev[imageUrl]) return prev;
+          const next = { ...prev };
+          delete next[imageUrl];
+          return next;
+        });
+      }
+      await applyGroupImage(selectedGroupId, null);
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Gruppenbild konnte nicht entfernt werden.');
+    } finally {
+      setMediaUploadBusy(false);
+    }
+  };
+
+  const handleRemoveOrgLogo = async () => {
+    if (!selectedOrgId) return;
+    if (supabaseUsingFallback || !supabaseUrl || !supabaseAnonKey) {
+      Alert.alert('Supabase offline', 'Vereinslogo kann nicht entfernt werden.');
+      return;
+    }
+    const logoUrl = currentOrg?.logo_url ?? null;
+    setMediaUploadBusy(true);
+    try {
+      if (logoUrl) {
+        const path = getChatMediaPathFromUrl(logoUrl);
+        if (!path) {
+          throw new Error('Vereinslogo konnte im Speicher nicht gefunden werden.');
+        }
+        const { error } = await (supabase as any).storage.from(CHAT_MEDIA_BUCKET).remove([path]);
+        if (error) throw error;
+        setChatMediaUrlCache((prev) => {
+          if (!prev[logoUrl]) return prev;
+          const next = { ...prev };
+          delete next[logoUrl];
+          return next;
+        });
+      }
+      await applyOrgLogo(selectedOrgId, null);
+    } catch (e: any) {
+      Alert.alert('Fehler', e?.message ?? 'Vereinslogo konnte nicht entfernt werden.');
+    } finally {
+      setMediaUploadBusy(false);
+    }
+  };
+
   const waitForPickerDismiss = async () => {
     Keyboard.dismiss();
     await new Promise((resolve) => setTimeout(resolve, 400));
@@ -1092,7 +1458,7 @@ export default function Home() {
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        mediaTypes: (target === 'group' || target === 'org' ? ['images'] : ['images', 'videos']) as ImagePicker.MediaType[],
         quality: 0.8,
       });
       if (result.canceled) {
@@ -1122,8 +1488,13 @@ export default function Home() {
     setShowMediaModal(false);
     await waitForPickerDismiss();
     try {
-      const allowMultiple = target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission';
-      const res = await DocumentPicker.getDocumentAsync({ multiple: allowMultiple, copyToCacheDirectory: true, type: '*/*' });
+      const isImageOnly = target === 'group' || target === 'org';
+      const allowMultiple = !isImageOnly && (target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission');
+      const res = await DocumentPicker.getDocumentAsync({
+        multiple: allowMultiple,
+        copyToCacheDirectory: true,
+        type: isImageOnly ? 'image/*' : '*/*',
+      });
       if ((res as any).canceled || (res as any).type === 'cancel') {
         setShowMediaModal(true);
         return;
@@ -1165,7 +1536,7 @@ export default function Home() {
       }
       const allowMultiple = target === 'exercise' || target === 'chat' || target === 'assignment' || target === 'submission';
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        mediaTypes: (target === 'group' || target === 'org' ? ['images'] : ['images', 'videos']) as ImagePicker.MediaType[],
         allowsMultipleSelection: allowMultiple,
         quality: 0.8,
       });
@@ -1407,39 +1778,50 @@ export default function Home() {
 
   const deleteOrganisationCascade = async (orgId: string) => {
     try {
-      const { data: chans, error: chSelErr } = await supabase.from('channels').select('id').eq('org_id', orgId);
-      if (chSelErr) throw chSelErr;
-      const channelIds = (chans ?? []).map((c: any) => c.id);
-      if (channelIds.length) {
-        const { error: msgDelErr } = await supabase.from('messages').delete().in('channel_id', channelIds);
-        if (msgDelErr) throw msgDelErr;
+      // Prefer server-side RPC which handles the cascade with security definer
+      const rpcRes = await (supabase as any).rpc('delete_org_cascade', { p_org_id: orgId });
+      if (rpcRes?.error) throw rpcRes.error;
+
+      const { data: remainingRows, error: remErr } = await supabase.from('organisations').select('id').eq('id', orgId);
+      if (remErr) throw remErr;
+      if (remainingRows && remainingRows.length) {
+        console.warn('[org-delete] still exists after RPC, attempting manual cascade', { remainingRows });
+        // manual fallback (attempt to remove dependent rows)
+        const { data: chans, error: chSelErr } = await supabase.from('channels').select('id').eq('org_id', orgId);
+        if (chSelErr) throw chSelErr;
+        const channelIds = (chans ?? []).map((c: any) => c.id);
+        if (channelIds.length) {
+          const { error: msgDelErr } = await supabase.from('messages').delete().in('channel_id', channelIds);
+          if (msgDelErr) throw msgDelErr;
+        }
+
+        const { error: chanDelErr } = await supabase.from('channels').delete().eq('org_id', orgId);
+        if (chanDelErr) throw chanDelErr;
+
+        const { data: gs, error: gSelErr } = await supabase.from('groups').select('id').eq('org_id', orgId);
+        if (gSelErr) throw gSelErr;
+        const gIds = (gs ?? []).map((g: any) => g.id);
+        if (gIds.length) {
+          const { error: gmDelErr } = await supabase.from('group_members').delete().in('group_id', gIds);
+          if (gmDelErr) throw gmDelErr;
+        }
+
+        const { error: annDelErr } = await supabase.from('announcements').delete().eq('org_id', orgId);
+        if (annDelErr) throw annDelErr;
+
+        const { error: grpDelErr } = await supabase.from('groups').delete().eq('org_id', orgId);
+        if (grpDelErr) throw grpDelErr;
+
+        const { error: memDelErr } = await supabase.from('organisation_members').delete().eq('org_id', orgId);
+        if (memDelErr) throw memDelErr;
+
+        const { error: orgDelErr } = await supabase.from('organisations').delete().eq('id', orgId);
+        if (orgDelErr) throw orgDelErr;
       }
-
-      const { error: chanDelErr } = await supabase.from('channels').delete().eq('org_id', orgId);
-      if (chanDelErr) throw chanDelErr;
-
-      const { data: gs, error: gSelErr } = await supabase.from('groups').select('id').eq('org_id', orgId);
-      if (gSelErr) throw gSelErr;
-      const gIds = (gs ?? []).map((g: any) => g.id);
-      if (gIds.length) {
-        const { error: gmDelErr } = await supabase.from('group_members').delete().in('group_id', gIds);
-        if (gmDelErr) throw gmDelErr;
-      }
-
-      const { error: annDelErr } = await supabase.from('announcements').delete().eq('org_id', orgId);
-      if (annDelErr) throw annDelErr;
-
-      const { error: grpDelErr } = await supabase.from('groups').delete().eq('org_id', orgId);
-      if (grpDelErr) throw grpDelErr;
-
-      const { error: memDelErr } = await supabase.from('organisation_members').delete().eq('org_id', orgId);
-      if (memDelErr) throw memDelErr;
-
-      const { error: orgDelErr } = await supabase.from('organisations').delete().eq('id', orgId);
-      if (orgDelErr) throw orgDelErr;
 
       return true;
     } catch (e: any) {
+      console.warn('[org-delete] failed', e);
       Alert.alert('Fehler', e?.message ?? 'Löschen fehlgeschlagen.');
       return false;
     }
@@ -1458,6 +1840,19 @@ export default function Home() {
       if (chanDelErr) throw chanDelErr;
       const { error: annDelErr } = await supabase.from('announcements').delete().eq('group_id', groupId);
       if (annDelErr) throw annDelErr;
+      const { data: assignmentsRows, error: assSelErr } = await (supabase.from('assignments' as any) as any)
+        .select('id')
+        .eq('group_id', groupId);
+      if (assSelErr) throw assSelErr;
+      const assignmentIds = (assignmentsRows ?? []).map((a: any) => a.id).filter(Boolean);
+      if (assignmentIds.length) {
+        const { error: subDelErr } = await (supabase.from('assignment_submissions' as any) as any)
+          .delete()
+          .in('assignment_id', assignmentIds);
+        if (subDelErr) throw subDelErr;
+      }
+      const { error: assDelErr } = await (supabase.from('assignments' as any) as any).delete().eq('group_id', groupId);
+      if (assDelErr) throw assDelErr;
       const { error: memDelErr } = await supabase.from('group_members').delete().eq('group_id', groupId);
       if (memDelErr) throw memDelErr;
       const { error: grpDelErr } = await supabase.from('groups').delete().eq('id', groupId);
@@ -1471,6 +1866,19 @@ export default function Home() {
 
   const removeGroupLocally = (groupId: string) => {
     setGroups(prev => prev.filter(g => g.id !== groupId));
+    const removedAssignmentIds = assignments.filter((a) => a.groupId === groupId).map((a) => a.id);
+    if (removedAssignmentIds.length) {
+      setAssignments((prev) => prev.filter((a) => a.groupId !== groupId));
+      setAssignmentSubmissions((prev) => prev.filter((s) => !removedAssignmentIds.includes(s.assignmentId)));
+    }
+    if (selectedAssignment?.groupId === groupId) {
+      setSelectedAssignment(null);
+      setSelectedSubmission(null);
+      setAssignmentView('list');
+    }
+    if (assignmentGroupId === groupId) {
+      setAssignmentGroupId(null);
+    }
     if (selectedGroupId === groupId) {
       setSelectedGroupId(null);
       setChatMode('pick');
@@ -1846,7 +2254,7 @@ export default function Home() {
   };
   const handleAnnouncementCalendarUnsync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte w?hle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
@@ -1934,11 +2342,29 @@ export default function Home() {
       setLoadingRemote(false);
     })();
     return () => { alive = false; };
-  }, [selectedOrgId, sessionUserId]);
+  }, [selectedOrgId, sessionUserId, annRefreshKey]);
+
+  useEffect(() => {
+    if (screen === 'ankuendigung') {
+      setAnnRefreshKey((prev) => prev + 1);
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen === 'aufgaben') {
+      setAssignmentRefreshKey((prev) => prev + 1);
+    }
+  }, [screen]);
 
   useEffect(() => {
     if (screen === 'chat') setChatMode('pick');
   }, [screen]);
+
+  useEffect(() => {
+    if (screen === 'chat' && chatMode === 'pick') {
+      setGroupsRefreshKey((prev) => prev + 1);
+    }
+  }, [chatMode, screen]);
 
   useEffect(() => {
     if (screen !== 'chat') {
@@ -1967,9 +2393,14 @@ export default function Home() {
         return;
       }
       const channelByGroup: Record<string, string> = {};
+      const groupByChannel: Record<string, string> = {};
       (channels ?? []).forEach((c: any) => {
-        if (c.group_id) channelByGroup[c.group_id] = c.id;
+        if (c.group_id) {
+          channelByGroup[c.group_id] = c.id;
+          groupByChannel[c.id] = c.group_id;
+        }
       });
+      groupByChannelRef.current = groupByChannel;
       const counts: Record<string, number> = {};
       await Promise.all(groupIds.map(async (gid) => {
         const channelId = channelByGroup[gid];
@@ -1993,29 +2424,82 @@ export default function Home() {
   }, [chatSeenByGroup, groups, selectedOrgId, sessionUserId, supabaseUsingFallback]);
 
   useEffect(() => {
-    if (screen === 'home' || (screen === 'chat' && chatMode === 'pick')) {
-      refreshChatUnreadCounts();
-    }
+    if (screen !== 'home' && !(screen === 'chat' && chatMode === 'pick')) return;
+    refreshChatUnreadCounts();
+    const intervalId = setInterval(refreshChatUnreadCounts, 5000);
+    return () => clearInterval(intervalId);
   }, [chatMode, refreshChatUnreadCounts, screen]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId || !selectedOrgId || !groups.length) return;
+    let alive = true;
+    let chan: any = null;
+    (async () => {
+      const groupIds = groups.map((g) => g.id);
+      const { data, error } = await (supabase.from('channels') as any)
+        .select('id, group_id')
+        .eq('org_id', selectedOrgId)
+        .in('group_id', groupIds);
+      if (!alive || error) return;
+      const groupByChannel: Record<string, string> = {};
+      (data ?? []).forEach((c: any) => {
+        if (c.id && c.group_id) groupByChannel[c.id] = c.group_id;
+      });
+      groupByChannelRef.current = groupByChannel;
+      const channel = (supabase as any).channel?.(`chat-unread-${selectedOrgId}-${sessionUserId}`);
+      (data ?? []).forEach((c: any) => {
+        if (!c?.id) return;
+        channel?.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${c.id}` }, (payload: any) => {
+          const row = payload.new as { channel_id?: string; created_at?: string; user_id?: string | null };
+          if (!row?.channel_id) return;
+          if (row.user_id && row.user_id === sessionUserId) return;
+          const gid = groupByChannelRef.current[row.channel_id];
+          if (!gid) return;
+          if (screenRef.current === 'chat' && chatModeRef.current === 'in' && selectedGroupIdRef.current === gid) return;
+          const seenIso = chatSeenByGroupRef.current[gid];
+          if (seenIso && row.created_at && new Date(seenIso).getTime() >= new Date(row.created_at).getTime()) return;
+          setChatUnreadByGroup((prev) => ({ ...prev, [gid]: (prev[gid] ?? 0) + 1 }));
+        });
+      });
+      chan = channel?.subscribe?.();
+    })();
+    return () => {
+      alive = false;
+      chan?.unsubscribe?.();
+    };
+  }, [groups, selectedOrgId, sessionUserId, supabaseUsingFallback]);
 
   // Fast group loader on org change with request guard
   useEffect(() => {
     (async () => {
       if (!selectedOrgId || !sessionUserId) { setGroups([]); setSelectedGroupId(null); return; }
       const req = ++groupsReqRef.current;
-      // clear stale immediately for snappy UI
-      setGroups([]); setSelectedGroupId(null); setChatChannelId(null); setChatMode('pick');
+      const orgChanged = prevOrgIdRef.current !== selectedOrgId;
+      prevOrgIdRef.current = selectedOrgId;
+      if (orgChanged) {
+        // clear stale immediately for snappy UI
+        setGroups([]); setSelectedGroupId(null); setChatChannelId(null); setChatMode('pick');
+      }
       const { data, error } = await (supabase.from('groups') as any)
         .select('id,name,org_id,image_url, group_members!inner(user_id)')
         .eq('org_id', selectedOrgId)
         .eq('group_members.user_id', sessionUserId);
       if (groupsReqRef.current !== req) return; // stale
-      if (error) { setGroups([]); setSelectedGroupId(null); return; }
+      if (error) { if (orgChanged) { setGroups([]); setSelectedGroupId(null); } return; }
       const list = ((data ?? []) as any[]).map((g: any) => ({ id: g.id, name: g.name, org_id: g.org_id, image_url: g.image_url }));
       setGroups(list);
-      setSelectedGroupId(list[0]?.id ?? null);
+      const currentSelected = selectedGroupIdRef.current;
+      const stillSelected = currentSelected && list.some((g) => g.id === currentSelected);
+      if (orgChanged || !stillSelected) {
+        const nextSelected = list[0]?.id ?? null;
+        setSelectedGroupId(nextSelected);
+        if (!nextSelected) {
+          setChatChannelId(null);
+          setChatMode('pick');
+        }
+      }
     })();
-  }, [selectedOrgId, sessionUserId]);
+  }, [selectedOrgId, sessionUserId, groupsRefreshKey]);
 
   // Load chat channel for selection; auto-create default for Director (no button UI)
   useEffect(() => {
@@ -2533,12 +3017,77 @@ export default function Home() {
     goBackToAssignmentList();
   };
 
+  const getGroupInitials = (name?: string | null) => {
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) return 'G';
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
 
+  const resolveChatMediaUrl = (url?: string | null) => {
+    if (!url) return null;
+    if (supabaseUsingFallback) return url;
+    const path = getChatMediaPathFromUrl(url);
+    if (path) return chatMediaUrlCache[url] ?? url;
+    return url;
+  };
 
-  const renderMediaPickerCard = () => (
+  const renderGroupAvatar = (
+    name: string | null | undefined,
+    imageUrl: string | null | undefined,
+    size: number,
+    extraStyle?: StyleProp<ViewStyle>,
+  ) => {
+    const baseStyle = { width: size, height: size, borderRadius: size / 2 };
+    const resolvedUrl = resolveChatMediaUrl(imageUrl ?? null);
+    if (resolvedUrl) {
+      return (
+        <Image
+          source={{ uri: resolvedUrl }}
+          style={[styles.groupAvatar, baseStyle, extraStyle as StyleProp<ImageStyle>]}
+          resizeMode="cover"
+        />
+      );
+    }
+    return (
+      <View style={[styles.groupAvatar, styles.groupAvatarPlaceholder, baseStyle, extraStyle]}>
+        <Text style={[styles.groupAvatarText, { fontSize: Math.max(12, Math.round(size * 0.35)) }]}>
+          {getGroupInitials(name)}
+        </Text>
+      </View>
+    );
+  };
+
+  const renderOrgLogo = (name?: string | null, logoUrl?: string | null) => {
+    const resolvedUrl = resolveChatMediaUrl(logoUrl ?? null);
+    if (resolvedUrl) {
+      return (
+        <Image
+          source={{ uri: resolvedUrl }}
+          style={styles.orgLogoImage}
+          resizeMode="contain"
+        />
+      );
+    }
+    return (
+      <View style={[styles.orgLogoImage, styles.orgLogoPlaceholder]}>
+        <Text style={styles.orgLogoText}>{getGroupInitials(name ?? null)}</Text>
+      </View>
+    );
+  };
+
+  const isMediaImageOnly = mediaPickerTarget === 'group' || mediaPickerTarget === 'org';
+
+  const renderMediaPickerCard = () => {
+    const isOrgDirector = currentOrg?.id ? orgRoles[currentOrg.id] === 'director' : false;
+    const canRemoveOrgLogo = mediaPickerTarget === 'org' && isOrgDirector && !!currentOrg?.logo_url;
+    const canRemoveGroupImage = mediaPickerTarget === 'group' && canEditGroupMedia && !!selectedGroup?.image_url;
+    const showRemoveButton = canRemoveOrgLogo || canRemoveGroupImage;
+    return (
     <View style={[styles.modalCard, styles.orgModalCard]}>
       <View style={{ padding: 12 }}>
-        <Text style={styles.sectionTitle}>Datei hinzufügen</Text>
+        <Text style={styles.sectionTitle}>{isMediaImageOnly ? 'Bild hinzufügen' : 'Datei hinzufügen'}</Text>
         <TouchableOpacity
           onPress={pickFromCamera}
           style={[styles.attachmentButton, { marginTop: 8 }, mediaUploadBusy && { opacity: 0.6 }]}
@@ -2560,7 +3109,34 @@ export default function Home() {
         >
           <Text style={styles.attachmentButtonText}>Aus Dateien wählen</Text>
         </TouchableOpacity>
-        {mediaPickerTarget === 'exercise' && (
+        {showRemoveButton && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionButtonDanger, mediaUploadBusy && styles.actionButtonDisabled, { marginTop: 12 }]}
+            disabled={mediaUploadBusy}
+            onPress={() => {
+              const message = mediaPickerTarget === 'org'
+                ? 'Soll das Vereinslogo entfernt werden?'
+                : 'Soll das Gruppenbild entfernt werden?';
+              Alert.alert('Bild entfernen', message, [
+                { text: 'Abbrechen', style: 'cancel' },
+                {
+                  text: 'Entfernen',
+                  style: 'destructive',
+                  onPress: () => {
+                    closeMediaPicker();
+                    if (mediaPickerTarget === 'org') {
+                      handleRemoveOrgLogo();
+                    } else {
+                      handleRemoveGroupImage();
+                    }
+                  },
+                },
+              ]);
+            }}
+          >
+            <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Bild entfernen</Text>
+          </TouchableOpacity>
+        )}{mediaPickerTarget === 'exercise' && (
           <>
             <Text style={[styles.label, styles.mediaHint]}>Oder per Link:</Text>
             <View style={styles.mediaTypeRow}>
@@ -2618,6 +3194,7 @@ export default function Home() {
       </View>
     </View>
   );
+  };
 
   const mediaPickerOverlay = showMediaModal && mediaPickerTarget !== 'exercise' ? (
     <View style={styles.mediaPickerOverlay}>
@@ -2710,7 +3287,7 @@ export default function Home() {
                   onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
                 >
                   <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum ausw?hlen'}
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
                   </Text>
                 </TouchableOpacity>
                 {showAnnouncementDatePicker && Platform.OS === 'ios' && (
@@ -2857,12 +3434,15 @@ export default function Home() {
                   style={[styles.card, styles.groupCard]}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <Text style={{ fontWeight: '700', color: '#E5F4EF', flex: 1 }}>{item.name}</Text>
-                    {chatUnreadByGroup[item.id] > 0 && (
-                      <View style={styles.groupBadge}>
-                        <Text style={styles.groupBadgeText}>{formatBadgeCount(chatUnreadByGroup[item.id])}</Text>
-                      </View>
-                    )}
+                    {renderGroupAvatar(item.name, item.image_url ?? null, 42, styles.groupListAvatar)}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <Text style={{ fontWeight: '700', color: '#E5F4EF', flex: 1 }} numberOfLines={1}>{item.name}</Text>
+                      {chatUnreadByGroup[item.id] > 0 && (
+                        <View style={styles.groupBadge}>
+                          <Text style={styles.groupBadgeText}>{formatBadgeCount(chatUnreadByGroup[item.id])}</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   {(orgRole === 'director') && (
                     <TouchableOpacity
@@ -2994,6 +3574,43 @@ export default function Home() {
           </Modal>
         {mediaPickerOverlay}
 
+        </SafeAreaView>
+      );
+    }
+    if (chatMode === 'info') {
+      return (
+        <SafeAreaView style={[styles.container, { justifyContent: 'flex-start' }, containerPaddings]}>
+          <View style={styles.sectionDivider} />
+          <View style={[styles.chatHeader, styles.chatHeaderNoBorder]}>
+            <TouchableOpacity onPress={() => setChatMode('in')} style={[styles.headerBack, { bottom: 60 }]}>
+              <Ionicons name="chevron-back" size={22} color="#194055" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>Gruppeninfo</Text>
+            <View style={{ width: 60 }} />
+          </View>
+          <View style={{ width: '100%', maxWidth: 720, paddingHorizontal: 12 }}>
+            <View style={styles.groupInfoCard}>
+              {renderGroupAvatar(selectedGroup?.name ?? '', selectedGroup?.image_url ?? null, 96, styles.groupInfoAvatar)}
+              <Text style={styles.groupInfoName} numberOfLines={2}>{selectedGroup?.name ?? 'Gruppe'}</Text>
+            </View>
+            {canEditGroupMedia && (
+              <>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonPrimary, mediaUploadBusy && styles.actionButtonDisabled]}
+                  disabled={mediaUploadBusy}
+                  onPress={() => {
+                    if (!selectedGroupId) return;
+                    openMediaPicker('group');
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>
+                    {selectedGroup?.image_url ? 'Bild ändern' : 'Bild hinzufügen'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+          {mediaPickerOverlay}
         </SafeAreaView>
       );
     }
@@ -3159,7 +3776,18 @@ export default function Home() {
             <TouchableOpacity onPress={() => setScreen('home')} style={[styles.headerBack, { bottom: 60 }]}>
               <Ionicons name="chevron-back" size={22} color="#194055" />
             </TouchableOpacity>
-            <Text style={[styles.title, { marginBottom: 0, bottom: 60, left: 17 }]}>{(groups.find(g => g.id === selectedGroupId)?.name) || 'Chat'}</Text>
+            <TouchableOpacity
+              style={[styles.chatHeaderTitleRow, { bottom: 60, left: 17 }]}
+              onPress={() => {
+                if (!selectedGroupId) return;
+                setChatMode('info');
+              }}
+              activeOpacity={0.85}
+              disabled={!selectedGroupId}
+            >
+              {renderGroupAvatar(selectedGroup?.name ?? '', selectedGroup?.image_url ?? null, 36, styles.chatHeaderAvatar)}
+              <Text style={[styles.title, { marginBottom: 0 }]} numberOfLines={1}>{selectedGroup?.name ?? 'Chat'}</Text>
+            </TouchableOpacity>
             <View style={{ width: 60 }} />
           </View>
           <FlatList
@@ -3930,7 +4558,23 @@ export default function Home() {
   }
   // --- Home-Screen mit Buttons ---
   return (
-    <SafeAreaView style={[styles.container, containerPaddings]}>
+    <SafeAreaView style={[styles.container, homePaddings]}>
+
+      {!!currentOrg && (
+        <View style={styles.orgLogoSection}>
+          <TouchableOpacity
+            style={styles.orgLogoWrap}
+            activeOpacity={orgRoles[currentOrg.id] === 'director' ? 0.85 : 1}
+            disabled={orgRoles[currentOrg.id] !== 'director' || mediaUploadBusy}
+            onPress={() => {
+              if (!selectedOrgId) return;
+              openMediaPicker('org');
+            }}
+          >
+            {renderOrgLogo(currentOrg.name, currentOrg.logo_url ?? null)}
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.orgHeader}>
         <TouchableOpacity
@@ -3948,7 +4592,6 @@ export default function Home() {
         )}
       </View>
       {/* Login-Button entfernt: Auth flow steht jetzt über /login */}
-
       <TouchableOpacity style={styles.menuBtn} onPress={() => setScreen('ankuendigung')}>
         <Text style={styles.menuBtnText}>Ankündigungen</Text>
         {unreadAnnouncementCount > 0 && (
@@ -4259,6 +4902,12 @@ const styles = StyleSheet.create({
   orgNamePressable: { flexDirection: 'row', alignItems: 'center' },
   orgNameText: { fontSize: 40, fontWeight: '800', color: '#E5F4EF' },
   orgNameIcon: { marginLeft: 6 },
+  orgLogoSection: { width: '100%', maxWidth: 720, alignItems: 'center', marginBottom: 12 },
+  orgLogoWrap: { width: 140, height: 140, borderRadius: 20, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#0F2530', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: 8 },
+  orgLogoImage: { width: '100%', height: '100%' },
+  orgLogoPlaceholder: { backgroundColor: '#1b3746', alignItems: 'center', justifyContent: 'center' },
+  orgLogoText: { color: '#E5F4EF', fontWeight: '700', fontSize: 28 },
+  orgLogoActions: { width: '100%', maxWidth: 360 },
   roleBadge: { backgroundColor: '#194055', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6 },
   roleBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12, letterSpacing: 0.5, textTransform: 'uppercase' },
   switchModalCard: { backgroundColor: '#194055', borderColor: '#194055' },
@@ -4386,13 +5035,21 @@ const styles = StyleSheet.create({
   // Cards & inputs
   card: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', marginBottom: 10, backgroundColor: '#112a37', width: '100%' },
   groupCard: { flexDirection: 'row', alignItems: 'center' },
+  groupAvatar: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#0F2530', borderWidth: 1, borderColor: '#2A3E48' },
+  groupAvatarPlaceholder: { backgroundColor: '#1b3746' },
+  groupAvatarText: { color: '#E5F4EF', fontWeight: '700' },
+  groupListAvatar: { marginRight: 12 },
+  chatHeaderAvatar: { marginRight: 10 },
+  groupInfoAvatar: { marginBottom: 10 },
+  groupInfoCard: { alignItems: 'center', paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: '#2A3E48', backgroundColor: '#112a37', marginBottom: 12 },
+  groupInfoName: { color: '#E5F4EF', fontSize: 18, fontWeight: '700', textAlign: 'center' },
   groupActionButton: { padding: 4, marginLeft: 12, borderRadius: 16, backgroundColor: '#1b3746' },
   groupBadge: { minWidth: 24, height: 24, borderRadius: 12, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, marginLeft: 8 },
   groupBadgeText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
   announcementCard: { minHeight: 150, justifyContent: 'space-between' },
   announcementCardRow: { flexDirection: 'row', alignItems: 'center' },
   annTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4, color: '#E5F4EF' },
-  annMeta: { fontSize: 12, color: '#000000ff', marginBottom: 6 },
+  annMeta: { fontSize: 12, color: '#ffffffff', marginBottom: 6 },
   annBody: { fontSize: 14, color: '#E5F4EF' },
   input: { borderWidth: 1, borderColor: '#2A3E48', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8, color: '#E5F4EF', backgroundColor: '#0F2530' },
   inputMultiline: { height: 44 },
@@ -4490,6 +5147,7 @@ const styles = StyleSheet.create({
   sendBtn: { paddingVertical: 14, paddingHorizontal: 16, marginLeft: 8, backgroundColor: '#194055', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.6 },
   chatHeader: { width: '100%', maxWidth: 720, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 1, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2A3E48' },
+  chatHeaderTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   chatHeaderNoBorder: { borderBottomWidth: 0 },
   chatHeaderLift: { bottom: 60 },
   sectionDivider: { width: '100%', maxWidth: 720, height: StyleSheet.hairlineWidth, backgroundColor: '#2A3E48', marginBottom: 8 },
@@ -4642,35 +5300,4 @@ const buildChatBody = (text: string, media: ChatMedia | ChatMedia[] | null, send
   }
   return text;
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

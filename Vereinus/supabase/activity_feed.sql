@@ -762,6 +762,101 @@ create trigger tasks_activity
 after insert or update on public.tasks
 for each row execute function public.tg_task_activity();
 
+-- Chat messages -> activity events.
+create or replace function public.tg_message_activity()
+returns trigger
+security definer
+set search_path = public
+set row_security = off
+language plpgsql
+as $function$
+declare
+  v_org uuid;
+  v_group uuid;
+  v_scope text;
+  v_key text;
+  v_actor uuid;
+  v_title text;
+  v_text text;
+  v_json jsonb;
+begin
+  select org_id, group_id
+    into v_org, v_group
+  from public.channels
+  where id = new.channel_id;
+
+  if v_org is null then
+    return new;
+  end if;
+
+  v_scope := case when v_group is null then 'org' else 'group' end;
+  v_actor := coalesce(auth.uid(), new.user_id);
+
+  v_text := coalesce(new.body, '');
+  begin
+    v_json := v_text::jsonb;
+    if jsonb_typeof(v_json) = 'object' and v_json ? 'text' then
+      v_text := coalesce(v_json->>'text', v_text);
+    end if;
+  exception when others then
+    null;
+  end;
+
+  v_title := nullif(trim(v_text), '');
+  if v_title is not null and length(v_title) > 120 then
+    v_title := substring(v_title from 1 for 120) || '...';
+  end if;
+
+  v_key := 'chat_message_created:' || new.id;
+  perform public.insert_activity_event(
+    v_key,
+    'chat_message_created',
+    'chat',
+    v_scope,
+    v_org,
+    v_group,
+    null,
+    v_actor,
+    'messages',
+    new.id,
+    v_title,
+    v_text,
+    null,
+    jsonb_build_object('channel_id', new.channel_id)
+  );
+  return new;
+end;
+$function$;
+
+drop trigger if exists messages_activity on public.messages;
+create trigger messages_activity
+after insert on public.messages
+for each row execute function public.tg_message_activity();
+
+-- Ensure personal_calendar_events has an "end" column (used by triggers + app).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'personal_calendar_events'
+      AND column_name = 'end'
+  ) THEN
+    ALTER TABLE public.personal_calendar_events ADD COLUMN "end" timestamptz;
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'personal_calendar_events'
+        AND column_name = 'end_at'
+    ) THEN
+      EXECUTE 'UPDATE public.personal_calendar_events SET "end" = end_at WHERE "end" IS NULL';
+    END IF;
+  END IF;
+END
+$$;
+
 -- Personal calendar events -> start events.
 create or replace function public.tg_personal_calendar_activity()
 returns trigger
@@ -793,7 +888,7 @@ begin
       new.title,
       new.title,
       v_start,
-      jsonb_build_object('end', new.end)
+      jsonb_build_object('end', new."end")
     );
   end if;
   return new;
