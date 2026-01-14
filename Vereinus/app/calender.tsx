@@ -93,7 +93,11 @@ const formatWeekRange = (start: Date) => {
 };
 const parseLocalDateOnly = (value?: string) => {
   if (!value) return null;
-  const datePart = value.split('T')[0];
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('T') || /\d{2}:\d{2}/.test(trimmed)) return null;
+  const datePart = trimmed.split(' ')[0];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
   const [year, month, day] = datePart.split('-').map(Number);
   if (!year || !month || !day) return null;
   return new Date(year, month - 1, day);
@@ -180,9 +184,13 @@ export default function Calender() {
   const [eventModalVisible, setEventModalVisible] = useState(false);
   const [eventDraft, setEventDraft] = useState<EventDraft | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editingEventMeta, setEditingEventMeta] = useState<{ scope: 'self' | 'org'; orgId: string | null } | null>(null);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [roleByOrg, setRoleByOrg] = useState<Record<string, OrgRole>>({});
+  const [taskListIds, setTaskListIds] = useState<string[]>([]);
+  const directorOrgs = useMemo(() => orgs.filter((org) => roleByOrg[org.id] === 'director'), [orgs, roleByOrg]);
+  const canUseOrgScope = directorOrgs.length > 0;
   const [eventDetail, setEventDetail] = useState<CalendarEvent | null>(null);
   const [timePickerField, setTimePickerField] = useState<'start' | 'end' | null>(null);
   const [timePickerValue, setTimePickerValue] = useState(new Date());
@@ -191,12 +199,14 @@ export default function Calender() {
   const TASKLIST_STORAGE_KEY = '@vereinus/tasklists';
   const ASSIGNMENTS_STORAGE_KEY = '@vereinus/assignments';
   const handleScopeChange = (scope: EventDraft['scope']) => {
+    if (scope === 'org' && !canUseOrgScope) return;
     setEventDraft((prev) => {
       if (!prev) return prev;
       if (scope === 'self') {
         return { ...prev, scope, orgId: null };
       }
-      return { ...prev, scope };
+      const nextOrgId = prev.orgId ?? directorOrgs[0]?.id ?? null;
+      return { ...prev, scope, orgId: nextOrgId };
     });
   };
 
@@ -270,6 +280,7 @@ export default function Calender() {
     };
 
     if (supabaseUsingFallback || !sessionUserId) {
+      setTaskListIds([]);
       try {
         await loadFromStorage();
       } catch {
@@ -286,14 +297,21 @@ export default function Calender() {
         .eq('kind', 'user');
       const listRows = (listRes as any)?.data ?? [];
       const listIds = listRows.map((row: any) => row.id).filter(Boolean);
-      if (!listIds.length) {
+      const nextListIds = Array.from(new Set(listIds as string[])).sort();
+      setTaskListIds((prev) => {
+        if (prev.length === nextListIds.length && prev.every((id, index) => id === nextListIds[index])) {
+          return prev;
+        }
+        return nextListIds;
+      });
+      if (!nextListIds.length) {
         setTaskEvents([]);
         return;
       }
       const taskRes = await supabase
         .from('tasks')
         .select('id, list_id, title, description, start_at, due_at, done')
-        .in('list_id', listIds);
+        .in('list_id', nextListIds);
       const taskRows = (taskRes as any)?.data ?? [];
       const next: CalendarEvent[] = [];
       taskRows.forEach((row: any) => {
@@ -318,6 +336,7 @@ export default function Calender() {
       });
       setTaskEvents(next);
     } catch {
+      setTaskListIds([]);
       try {
         await loadFromStorage();
       } catch {
@@ -428,42 +447,52 @@ export default function Calender() {
     }
   }, [ASSIGNMENTS_STORAGE_KEY, orgs, roleByOrg, sessionUserId, supabaseUsingFallback]);
 
+  const refreshOrgAccess = useCallback(async (userIdOverride?: string | null) => {
+    const userId = userIdOverride ?? sessionUserId;
+    if (!userId) {
+      setOrgs([]);
+      setRoleByOrg({});
+      return;
+    }
+    const { data: memberships } = await supabase
+      .from('organisation_members')
+      .select('org_id, role')
+      .eq('user_id', userId);
+    const mems = (memberships ?? []) as { org_id: string; role: OrgRole }[];
+    const roleMap: Record<string, OrgRole> = {};
+    mems.forEach((mem) => {
+      roleMap[mem.org_id] = mem.role;
+    });
+    setRoleByOrg(roleMap);
+    if (!mems.length) {
+      setOrgs([]);
+      return;
+    }
+    const orgIds = mems.map((m) => m.org_id);
+    const { data: orgRows } = await supabase.from('organisations').select('id, name').in('id', orgIds);
+    setOrgs((orgRows ?? []) as { id: string; name: string }[]);
+  }, [sessionUserId]);
+
   useEffect(() => {
     let alive = true;
+    const applySession = async (userId: string | null) => {
+      if (!alive) return;
+      setSessionUserId(userId);
+      await refreshOrgAccess(userId);
+    };
     (async () => {
       const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user?.id;
-      setSessionUserId(userId ?? null);
-      if (!userId) {
-        if (!alive) return;
-        setOrgs([]);
-        setRoleByOrg({});
-        return;
-      }
-      const { data: memberships } = await supabase
-        .from('organisation_members')
-        .select('org_id, role')
-        .eq('user_id', userId);
-      if (!alive) return;
-      const mems = (memberships ?? []) as { org_id: string; role: OrgRole }[];
-      const roleMap: Record<string, OrgRole> = {};
-      mems.forEach((mem) => {
-        roleMap[mem.org_id] = mem.role;
-      });
-      setRoleByOrg(roleMap);
-      if (!mems.length) {
-        setOrgs([]);
-        return;
-      }
-      const orgIds = mems.map((m) => m.org_id);
-      const { data: orgRows } = await supabase.from('organisations').select('id, name').in('id', orgIds);
-      if (!alive) return;
-      setOrgs((orgRows ?? []) as { id: string; name: string }[]);
+      const userId = sessionData.session?.user?.id ?? null;
+      await applySession(userId);
     })();
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event: any, _session: any) => {
+      applySession(_session?.user?.id ?? null);
+    });
     return () => {
       alive = false;
+      authListener?.subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshOrgAccess]);
 
   const refreshRemoteEvents = useCallback(async () => {
     if (!orgs.length) {
@@ -508,6 +537,8 @@ export default function Calender() {
         end = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), 23, 59, 59, 999);
       }
       if (!end || Number.isNaN(end.getTime())) end = new Date(start.getTime() + 60 * 60 * 1000);
+      const orgId = payload.orgId ?? row.org_id ?? null;
+      const canEditOrgEvent = !!payload.id && !isAnnouncement && !!orgId && roleByOrg[orgId] === 'director';
       const baseId = payload.id ?? `remote-${row.id}`;
       const event: CalendarEvent = {
         id: baseId,
@@ -515,15 +546,15 @@ export default function Calender() {
         description: payload.description ?? '',
         start: start.toISOString(),
         end: end.toISOString(),
-        orgId: payload.orgId ?? row.org_id ?? null,
+        orgId,
         scope: payload.scope ?? 'org',
-        readOnly: true,
+        readOnly: !canEditOrgEvent,
         source: 'remote',
       };
       eventsMap.set(baseId, event);
     });
     setRemoteEvents(Array.from(eventsMap.values()));
-  }, [orgs]);
+  }, [orgs, roleByOrg]);
 
   useEffect(() => {
     refreshRemoteEvents();
@@ -550,7 +581,105 @@ export default function Calender() {
   );
 
   useEffect(() => {
-    if (!orgs.length) return undefined;
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`personal-events-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_calendar_events', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshPersonalEvents();
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshPersonalEvents, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`org-members-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'organisation_members', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshOrgAccess(sessionUserId);
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshOrgAccess, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`tasklists-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'task_lists', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshTasklistEvents();
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshTasklistEvents, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !taskListIds.length) return undefined;
+    const channels = taskListIds.map((listId) =>
+      supabase
+        .channel(`tasks-${listId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `list_id=eq.${listId}` }, () => {
+          refreshTasklistEvents();
+        })
+        .subscribe(),
+    );
+    return () => {
+      channels.forEach((channel) => channel.unsubscribe());
+    };
+  }, [refreshTasklistEvents, supabaseUsingFallback, taskListIds]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`group-members-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'group_members', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshAssignmentEvents();
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshAssignmentEvents, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !orgs.length) return undefined;
+    const channels = orgs.map((org) =>
+      supabase
+        .channel(`assignments-${org.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments', filter: `org_id=eq.${org.id}` }, () => {
+          refreshAssignmentEvents();
+        })
+        .subscribe(),
+    );
+    return () => {
+      channels.forEach((channel) => channel.unsubscribe());
+    };
+  }, [orgs, refreshAssignmentEvents, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !orgs.length) return undefined;
     const orgSet = new Set(orgs.map((org) => org.id));
     if (!orgSet.size) return undefined;
     const channel = supabase
@@ -569,7 +698,7 @@ export default function Calender() {
     return () => {
       channel.unsubscribe();
     };
-  }, [orgs, refreshRemoteEvents]);
+  }, [orgs, refreshRemoteEvents, supabaseUsingFallback]);
 
   const panResponder = useMemo(
     () =>
@@ -619,33 +748,36 @@ export default function Calender() {
         description: '',
         start,
         end,
-        orgId: orgs[0]?.id ?? null,
+        orgId: directorOrgs[0]?.id ?? null,
         scope: 'self',
       });
       setEditingEventId(null);
+      setEditingEventMeta(null);
       setEventDetail(null);
       setTimePickerField(null);
       setTimePickerValue(start);
       setEventModalVisible(true);
     },
-    [orgs],
+    [directorOrgs],
   );
 
   const saveEvent = useCallback(async () => {
     if (!eventDraft) return;
+    const effectiveScope = canUseOrgScope ? eventDraft.scope : 'self';
+    const effectiveOrgId = effectiveScope === 'org' ? (eventDraft.orgId ?? directorOrgs[0]?.id ?? null) : null;
     if (!eventDraft.title.trim()) {
       Alert.alert('Titel fehlt', 'Bitte gib dem Termin einen Titel.');
       return;
     }
-    if (eventDraft.scope === 'org' && eventDraft.orgId && roleByOrg[eventDraft.orgId] !== 'director') {
+    if (effectiveScope === 'org' && effectiveOrgId && roleByOrg[effectiveOrgId] !== 'director') {
       Alert.alert('Keine Berechtigung', 'Nur Direktoren können Termine für den gesamten Verein veröffentlichen.');
       return;
     }
-    if (eventDraft.scope === 'org' && !eventDraft.orgId) {
+    if (effectiveScope === 'org' && !effectiveOrgId) {
       Alert.alert('Verein fehlt', 'Bitte wähle einen Verein aus.');
       return;
     }
-    if (eventDraft.scope === 'self' && !sessionUserId) {
+    if (effectiveScope === 'self' && !sessionUserId) {
       Alert.alert('Login erforderlich', 'Bitte melde dich an, um persönliche Termine zu speichern.');
       return;
     }
@@ -653,6 +785,10 @@ export default function Calender() {
       Alert.alert('Supabase offline', 'Termine koennen gerade nicht gespeichert werden.');
       return;
     }
+    const previousScope = editingEventMeta?.scope ?? null;
+    const previousOrgId = editingEventMeta?.orgId ?? null;
+    const wasEditingPersonal = !!editingEventId && previousScope === 'self';
+    const wasEditingOrg = !!editingEventId && previousScope === 'org';
     const eventId = editingEventId ?? `${Date.now()}`;
     const payload: CalendarEvent = {
       id: eventId,
@@ -660,13 +796,45 @@ export default function Calender() {
       description: eventDraft.description.trim(),
       start: eventDraft.start.toISOString(),
       end: eventDraft.end.toISOString(),
-      orgId: eventDraft.orgId,
-      scope: eventDraft.scope,
+      orgId: effectiveOrgId,
+      scope: effectiveScope,
       readOnly: false,
       source: 'local',
     };
-    if (eventDraft.scope === 'self' && sessionUserId) {
-      if (editingEventId) {
+    if (wasEditingPersonal && effectiveScope === 'org') {
+      if (!sessionUserId || !editingEventId) {
+        Alert.alert('Kalender', 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      const { error } = await supabase
+        .from('personal_calendar_events')
+        .delete()
+        .eq('id', editingEventId)
+        .eq('user_id', sessionUserId);
+      if (error) {
+        Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      setLocalEvents((prev) => prev.filter((evt) => evt.id !== editingEventId));
+    }
+    if (wasEditingOrg && effectiveScope === 'self') {
+      if (!editingEventId || !previousOrgId) {
+        Alert.alert('Kalender', 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      const { error } = await supabase
+        .from('calendar_sync_queue')
+        .delete()
+        .eq('org_id', previousOrgId)
+        .eq('event_payload->>id', editingEventId);
+      if (error) {
+        Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
+        return;
+      }
+      refreshRemoteEvents();
+    }
+    if (effectiveScope === 'self' && sessionUserId) {
+      if (wasEditingPersonal && editingEventId) {
         const { data, error } = await supabase
           .from('personal_calendar_events')
           .update({
@@ -719,12 +887,24 @@ export default function Calender() {
     } else {
       // org scope: keep localEvents unchanged; remote fetch will refresh
     }
-    if (eventDraft.scope === 'org' && eventDraft.orgId) {
+    if (effectiveScope === 'org' && effectiveOrgId) {
+      if (wasEditingOrg && editingEventId) {
+        const orgIdForDelete = previousOrgId ?? effectiveOrgId;
+        const { error: deleteError } = await supabase
+          .from('calendar_sync_queue')
+          .delete()
+          .eq('org_id', orgIdForDelete)
+          .eq('event_payload->>id', editingEventId);
+        if (deleteError) {
+          Alert.alert('Kalender', deleteError.message ?? 'Termin konnte nicht gespeichert werden.');
+          return;
+        }
+      }
       const { error } = await supabase
         .from('calendar_sync_queue')
         .insert({
           event_payload: payload,
-          org_id: eventDraft.orgId,
+          org_id: effectiveOrgId,
         });
       if (error) {
         Alert.alert('Kalender', error.message ?? 'Termin konnte nicht gespeichert werden.');
@@ -738,7 +918,8 @@ export default function Calender() {
     setEventModalVisible(false);
     setEventDraft(null);
     setEditingEventId(null);
-  }, [editingEventId, eventDraft, roleByOrg, sessionUserId, refreshPersonalEvents, refreshRemoteEvents]);
+    setEditingEventMeta(null);
+  }, [editingEventId, editingEventMeta, eventDraft, roleByOrg, sessionUserId, canUseOrgScope, directorOrgs, refreshPersonalEvents, refreshRemoteEvents]);
 
   const upcomingEventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -776,19 +957,21 @@ export default function Calender() {
   }, []);
 
   const beginEditEvent = useCallback((event: CalendarEvent) => {
+    const nextOrgId = event.scope === 'org' ? (event.orgId ?? directorOrgs[0]?.id ?? null) : null;
     setEventDraft({
       title: event.title,
       description: event.description ?? '',
       start: new Date(event.start),
       end: new Date(event.end),
-      orgId: event.orgId ?? null,
+      orgId: nextOrgId,
       scope: event.scope,
     });
     setEditingEventId(event.id);
+    setEditingEventMeta({ scope: event.scope, orgId: event.orgId ?? null });
     setTimePickerField(null);
     setTimePickerValue(new Date(event.start));
     setEventModalVisible(true);
-  }, []);
+  }, [directorOrgs]);
 
   const handleEditFromDetail = useCallback(() => {
     if (!eventDetail || eventDetail.readOnly) return;
@@ -819,12 +1002,21 @@ export default function Calender() {
         Alert.alert('Keine Berechtigung', 'Nur Direktoren können Vereins-Termine löschen.');
         return false;
       }
+      const payloadId = evt.id && !evt.id.startsWith('remote-') ? evt.id : null;
+      if (!payloadId) {
+        Alert.alert('Fehler', 'Termin konnte nicht gel”scht werden.');
+        return false;
+      }
       try {
-        await supabase
+        const { error } = await supabase
           .from('calendar_sync_queue')
           .delete()
           .eq('org_id', evt.orgId)
-          .or(`event_payload->>id.eq.${evt.id}`);
+          .eq('event_payload->>id', payloadId);
+        if (error) {
+          Alert.alert('Fehler', 'Termin konnte nicht gel”scht werden.');
+          return false;
+        }
         refreshRemoteEvents();
         return true;
       } catch {
@@ -839,6 +1031,7 @@ export default function Calender() {
     setEventModalVisible(false);
     setEventDraft(null);
     setEditingEventId(null);
+    setEditingEventMeta(null);
     setTimePickerField(null);
   }, []);
 
@@ -1287,50 +1480,54 @@ export default function Calender() {
                 </View>
               </View>
             )}
-            <View style={styles.scopeRow}>
-              <Text style={styles.timeInputLabel}>Sichtbarkeit</Text>
-              <View style={styles.scopePills}>
-                {[
-                  { key: 'self', label: 'Nur ich' },
-                  { key: 'org', label: 'Verein' },
-                ].map((scope) => (
-                  <Pressable
-                    key={scope.key}
-                    style={[styles.scopeChip, eventDraft?.scope === scope.key && styles.scopeChipActive]}
-                    onPress={() => handleScopeChange(scope.key as EventDraft['scope'])}
-                  >
-                    <Text
-                      style={[styles.scopeChipText, eventDraft?.scope === scope.key && styles.scopeChipTextActive]}
-                    >
-                      {scope.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-            
-            {eventDraft?.scope === 'org' && orgs.length > 0 && (
-              <View style={styles.orgPickerSection}>
-                <Text style={styles.timeInputLabel}>Verein</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.orgChipsRow}>
-                  {orgs.map((org) => (
-                    <Pressable
-                      key={org.id}
-                      style={[styles.orgChip, eventDraft?.orgId === org.id && styles.orgChipActive]}
-                      onPress={() => setEventDraft((prev) => (prev ? { ...prev, orgId: org.id } : prev))}
-                    >
-                      <Text
-                        style={[styles.orgChipText, eventDraft?.orgId === org.id && styles.orgChipTextActive]}
+            {canUseOrgScope && (
+              <>
+                <View style={styles.scopeRow}>
+                  <Text style={styles.timeInputLabel}>Sichtbarkeit</Text>
+                  <View style={styles.scopePills}>
+                    {[
+                      { key: 'self', label: 'Nur ich' },
+                      { key: 'org', label: 'Verein' },
+                    ].map((scope) => (
+                      <Pressable
+                        key={scope.key}
+                        style={[styles.scopeChip, eventDraft?.scope === scope.key && styles.scopeChipActive]}
+                        onPress={() => handleScopeChange(scope.key as EventDraft['scope'])}
                       >
-                        {org.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <Text style={[styles.broadcastLabel, { marginTop: 8 }]}>
-                  Termin wird automatisch mit dem Verein geteilt.
-                </Text>
-              </View>
+                        <Text
+                          style={[styles.scopeChipText, eventDraft?.scope === scope.key && styles.scopeChipTextActive]}
+                        >
+                          {scope.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                {eventDraft?.scope === 'org' && directorOrgs.length > 0 && (
+                  <View style={styles.orgPickerSection}>
+                    <Text style={styles.timeInputLabel}>Verein</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.orgChipsRow}>
+                      {directorOrgs.map((org) => (
+                        <Pressable
+                          key={org.id}
+                          style={[styles.orgChip, eventDraft?.orgId === org.id && styles.orgChipActive]}
+                          onPress={() => setEventDraft((prev) => (prev ? { ...prev, orgId: org.id } : prev))}
+                        >
+                          <Text
+                            style={[styles.orgChipText, eventDraft?.orgId === org.id && styles.orgChipTextActive]}
+                          >
+                            {org.name}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    <Text style={[styles.broadcastLabel, { marginTop: 8 }]}>
+                      Termin wird automatisch mit dem Verein geteilt.
+                    </Text>
+                  </View>
+                )}
+              </>
             )}
 
 
@@ -1338,7 +1535,7 @@ export default function Calender() {
             
 
 
-            <View style={styles.modalButtonsRow}>
+            <View style={[styles.modalButtonsRow, !canUseOrgScope && styles.modalButtonsRowSpaced]}>
               <TouchableOpacity style={styles.modalCancelButton} onPress={closeEventModal}>
                 <Text style={styles.modalCancelText}>Abbrechen</Text>
               </TouchableOpacity>
@@ -1829,6 +2026,9 @@ const styles = StyleSheet.create({
   modalButtonsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+  },
+  modalButtonsRowSpaced: {
+    marginTop: 12,
   },
   modalSaveButton: {
     backgroundColor: '#1c9a93',

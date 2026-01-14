@@ -1,0 +1,143 @@
+{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0 Arial;}}\\fs24
+# Projektdokumentation: Vereinus\\par
+\\par
+## Vorwort\\par
+Diese Projektdokumentation beschreibt die Ziele, die technische Umsetzung sowie die erzielten Ergebnisse der mobilen Vereins-App Vereinus.  \\par
+Sie dient als Grundlage für die Bewertung, Weiterentwicklung und den Betrieb des Systems.  \\par
+Erstellt von Wayne Vincent Abiva – Zuständig für: Frontend, Backend, Projektmanagement, Tests.\\par
+\\par
+## Danksagung\\par
+Ich bedanke mich bei [Name/Institution] für die fachliche Unterstützung, den Zugang zu Testdaten und die Möglichkeit, dieses Projekt umzusetzen.\\par
+\\par
+## Abstract\\par
+Vereinus ist eine mobile Anwendung zur Organisation von Vereinsaktivitäten mit Fokus auf Kommunikation, Terminverwaltung und Aufgabenverteilung.  \\par
+Die App bietet Rollen (Direktor/Lehrer/Schüler), Chat mit Medien, Ankündigungen, Aufgaben, Übungen und einen Kalender mit persönlicher sowie vereinsweiter Sichtbarkeit.  \\par
+Technisch basiert das Frontend auf Expo/React Native, während das Backend über Supabase (PostgreSQL, Auth, Storage, Realtime) realisiert ist.\\par
+\\par
+## Inhaltsverzeichnis\\par
+1. Vorwort  \\par
+2. Danksagung  \\par
+3. Abstract  \\par
+4. Impressum  \\par
+5. Projektmanagement  \\par
+   5.1 Projektauftrag (wird separat eingefügt)  \\par
+   5.2 Projektstrukturplan (wird separat eingefügt)  \\par
+6. Technisches Konzept  \\par
+   6.1 Programmiersprachen  \\par
+   6.2 Frontend (Technologien)  \\par
+   6.3 Backend (Technologien)  \\par
+   6.4 Umsetzung und Ergebnisse  \\par
+       6.4.1 Frontend  \\par
+       6.4.2 Backend  \\par
+7. Abbildungsverzeichnis  \\par
+8. Quellenverzeichnis\\par
+\\par
+## Impressum\\par
+Autor: Wayne Vincent Abiva  \\par
+Institution: HTL Dornbirn  \\par
+Zuständigkeiten: Frontend, Backend, Projektmanagement, Tests  \\par
+Adresse: [Straße, PLZ, Ort]  \\par
+E-Mail: [E-Mail]  \\par
+Telefon: [optional]  \\par
+Erstellt am: 2025/2026  \\par
+\\par
+## Projektmanagement\\par
+### Projektauftrag (mach ich selbst)\\par
+[Platzhalter – Projektauftrag wird vom Autor eingefügt.]  \\par
+Datei: `projektunterlagen/Projektauftrag.pdf` (Platzhalter)\\par
+\\par
+### Projektstrukturplan (mach ich selbst)\\par
+[Platzhalter – Projektstrukturplan wird vom Autor eingefügt.]  \\par
+Datei: `projektunterlagen/Projektstrukturplan.png` oder `projektunterlagen/Projektstrukturplan.pdf` (Platzhalter)\\par
+\\par
+## Technisches Konzept\\par
+### Programmiersprachen\\par
+- TypeScript/JavaScript (App-Logik, UI)\\par
+- SQL (Datenbankfunktionen, Trigger, RLS-Policies)\\par
+- JSON (Konfiguration, Datenaustausch)\\par
+\\par
+### Frontend (Technologien)\\par
+- Expo als Build- und Laufzeitumgebung\\par
+- React Native für die mobile UI\\par
+- Expo Router (file-based routing)\\par
+- React Navigation (Tabs und Navigation)\\par
+- AsyncStorage als Offline-/Fallback-Speicher\\par
+- Medien-/System-Module: `expo-image-picker`, `expo-document-picker`, `expo-video`, `expo-clipboard`\\par
+\\par
+### Backend (Technologien)\\par
+- Supabase (PostgreSQL, Auth, Storage, Realtime)\\par
+- RLS (Row Level Security) zur Zugriffskontrolle\\par
+- RPC/SQL-Funktionen (z. B. `has_org_role`, `create_invite`, `redeem_invite`, `delete_org_cascade`)\\par
+- Storage Buckets für Medien (z. B. Chat-/Vereinsbilder, Aufgaben-Anhänge)\\par
+\\par
+### Umsetzung und Ergebnisse\\par
+#### Frontend\\par
+Die App ist als Tabs-basierte Oberfläche mit Dunkel-Design umgesetzt und beinhaltet folgende Hauptbereiche:\\par
+- Login/Registrierung: Anmeldung mit E-Mail oder Benutzername\\par
+- Startseite (Verein): Überblick, Vereinslogo, Navigation zu Funktionen\\par
+- Chat: Gruppenbasierter Chat mit Bild/Datei/Video-Uploads und Realtime-Updates\\par
+- Ankündigungen/News: Vereins- oder gruppenweite Ankündigungen, optionaler Kalendereintrag\\par
+- Aufgaben & Abgaben: Aufgabenverwaltung mit Abgaben (inkl. Anhänge)\\par
+- Übungen: Übungen mit Text und Medien\\par
+- Kalender: persönliche Termine + Vereins-Termine (rollenbasiert editierbar)\\par
+- Einstellungen: Profilpflege, Einladungen, rollenabhängige Verwaltungsfunktionen\\par
+\\par
+Abbildungen (Platzhalter, Dateien unter `projektunterlagen/abbildungen/`):\\par
+![Abbildung 3: Login/Registrierung](projektunterlagen/abbildungen/03_login.png)\\par
+![Abbildung 4: Startseite mit Vereinslogo](projektunterlagen/abbildungen/04_startseite.png)\\par
+![Abbildung 5: Kalender (Wochenansicht + Termin-Modal)](projektunterlagen/abbildungen/05_kalender.png)\\par
+![Abbildung 6: Chat (Gruppenliste + Chatansicht)](projektunterlagen/abbildungen/06_chat.png)\\par
+![Abbildung 7: Aufgabenliste / Aufgaben-Detail](projektunterlagen/abbildungen/07_aufgaben.png)\\par
+![Abbildung 8: Ankündigungen / News](projektunterlagen/abbildungen/08_ankuendigungen.png)\\par
+![Abbildung 9: Einstellungen (Einladungscode + Kopier-Icon)](projektunterlagen/abbildungen/09_einstellungen.png)\\par
+\\par
+#### Backend\\par
+Die Backend-Struktur basiert auf Supabase (PostgreSQL) mit rollenbasierter Zugriffskontrolle.  \\par
+Wichtige Tabellen (Auszug, basierend auf der Nutzung im Code):\\par
+- profiles: Benutzerprofile (display_name, username, first_name, last_name, email)\\par
+- organisations: Vereine (id, name, logo_url)\\par
+- organisation_members: Mitglieder + Rollen (director/teacher/student)\\par
+- groups: Gruppen innerhalb eines Vereins (id, org_id, name, image_url)\\par
+- group_members: Gruppenmitgliedschaften\\par
+- channels/messages: Chatkanäle und Nachrichten\\par
+- announcements: Ankündigungen (inkl. optionalem event_date)\\par
+- calendar_sync_queue: Vereins-Termine als JSON-Payload (org scope)\\par
+- personal_calendar_events: persönliche Termine (start/end)\\par
+- task_lists / tasks: Aufgabenlisten und Aufgaben\\par
+- assignments / assignment_submissions: Aufgabenstellungen + Abgaben\\par
+- exercises: Übungsinhalte\\par
+- activity_events/activity_seen: Aktivitätsfeed\\par
+\\par
+Speicher/Medien:\\par
+- Storage Bucket `chat-media`: Chat-Medien, Gruppenbilder, Vereinslogo\\par
+- Storage Bucket `assignment-attachments`: Aufgaben-Anhänge\\par
+\\par
+Abbildungen (Platzhalter, Dateien unter `projektunterlagen/abbildungen/`):\\par
+![Abbildung 1: Systemarchitektur (Frontend <-> Supabase)](projektunterlagen/abbildungen/01_architektur.png)\\par
+![Abbildung 2: Datenbank-ERD (Supabase)](projektunterlagen/abbildungen/02_erd.png)\\par
+![Abbildung 10: Storage Buckets (optional)](projektunterlagen/abbildungen/10_storage.png)\\par
+\\par
+## Abbildungsverzeichnis\\par
+Alle Abbildungen liegen unter `projektunterlagen/abbildungen/`.\\par
+\\par
+Abbildung 1: Systemarchitektur (Frontend <-> Supabase) - Datei: `01_architektur.png`  \\par
+Abbildung 2: Datenbank-ERD (Supabase) - Datei: `02_erd.png`  \\par
+Abbildung 3: Login/Registrierung - Datei: `03_login.png`  \\par
+Abbildung 4: Startseite mit Vereinslogo - Datei: `04_startseite.png`  \\par
+Abbildung 5: Kalender (Wochenansicht + Termin-Modal) - Datei: `05_kalender.png`  \\par
+Abbildung 6: Chat (Gruppenliste + Chatansicht) - Datei: `06_chat.png`  \\par
+Abbildung 7: Aufgabenliste / Aufgaben-Detail - Datei: `07_aufgaben.png`  \\par
+Abbildung 8: Ankündigungen - Datei: `08_ankuendigungen.png`  \\par
+Abbildung 9: Einstellungen (Einladungscode, Kopierfunktion) - Datei: `09_einstellungen.png`  \\par
+Abbildung 10: Storage Buckets (optional) - Datei: `10_storage.png`\\par
+\\par
+## Quellenverzeichnis\\par
+1. Expo Dokumentation - https://docs.expo.dev/ (Zugriff: [Datum])  \\par
+2. React Native Dokumentation - https://reactnative.dev/ (Zugriff: [Datum])  \\par
+3. Supabase Dokumentation - https://supabase.com/docs (Zugriff: [Datum])  \\par
+4. PostgreSQL Dokumentation - https://www.postgresql.org/docs/ (Zugriff: [Datum])  \\par
+5. Expo Router - https://docs.expo.dev/router/introduction/ (Zugriff: [Datum])  \\par
+6. Expo Image Picker - https://docs.expo.dev/versions/latest/sdk/imagepicker/ (Zugriff: [Datum])  \\par
+7. Expo Document Picker - https://docs.expo.dev/versions/latest/sdk/document-picker/ (Zugriff: [Datum])  \\par
+8. Expo Clipboard - https://docs.expo.dev/versions/latest/sdk/clipboard/ (Zugriff: [Datum])\\par
+}

@@ -174,6 +174,25 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public'
+      AND tablename = 'assignment_submissions'
+      AND policyname = 'assignment_submissions_delete_teacher'
+  ) THEN
+    CREATE POLICY assignment_submissions_delete_teacher
+      ON public.assignment_submissions
+      FOR DELETE
+      USING (
+        EXISTS (
+          SELECT 1
+          FROM public.assignments a
+          WHERE a.id = assignment_submissions.assignment_id
+            AND public.has_org_role(a.org_id, ARRAY['director','teacher'])
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
       AND tablename = 'personal_calendar_events'
       AND policyname = 'personal_calendar_events_select_own'
   ) THEN
@@ -372,6 +391,78 @@ BEGIN
     ALTER POLICY tasks_delete_own
       ON public.tasks
       USING (public.task_list_is_owner(tasks.list_id));
+  END IF;
+END
+$$;
+
+-- Organisations/groups policies for logo + group image updates.
+grant select, update on public.organisations to authenticated;
+grant select, update on public.groups to authenticated;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'organisations'
+      AND policyname = 'organisations_select_members'
+  ) THEN
+    CREATE POLICY organisations_select_members
+      ON public.organisations
+      FOR SELECT
+      USING (
+        EXISTS (
+          SELECT 1
+          FROM public.organisation_members om
+          WHERE om.org_id = organisations.id
+            AND om.user_id = auth.uid()
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'organisations'
+      AND policyname = 'organisations_update_director'
+  ) THEN
+    CREATE POLICY organisations_update_director
+      ON public.organisations
+      FOR UPDATE
+      USING (public.has_org_role(organisations.id, ARRAY['director']))
+      WITH CHECK (public.has_org_role(organisations.id, ARRAY['director']));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'groups'
+      AND policyname = 'groups_select_members'
+  ) THEN
+    CREATE POLICY groups_select_members
+      ON public.groups
+      FOR SELECT
+      USING (
+        EXISTS (
+          SELECT 1
+          FROM public.organisation_members om
+          WHERE om.org_id = groups.org_id
+            AND om.user_id = auth.uid()
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'groups'
+      AND policyname = 'groups_update_teacher'
+  ) THEN
+    CREATE POLICY groups_update_teacher
+      ON public.groups
+      FOR UPDATE
+      USING (public.has_org_role(groups.org_id, ARRAY['director','teacher']))
+      WITH CHECK (public.has_org_role(groups.org_id, ARRAY['director','teacher']));
   END IF;
 END
 $$;
