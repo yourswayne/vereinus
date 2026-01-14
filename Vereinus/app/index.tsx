@@ -2254,7 +2254,7 @@ export default function Home() {
   };
   const handleAnnouncementCalendarUnsync = async (announcement: AnnouncementRow) => {
     if (!selectedOrgId) {
-      Alert.alert('Kalender', 'Bitte w?hle zuerst einen Verein aus.');
+      Alert.alert('Kalender', 'Bitte wähle zuerst einen Verein aus.');
       return;
     }
     const eventId = getAnnouncementCalendarEventId(announcement.id);
@@ -3287,7 +3287,7 @@ export default function Home() {
                   onPress={() => setShowAnnouncementDatePicker((prev) => !prev)}
                 >
                   <Text style={announcementDateObj ? styles.datePickerValue : styles.datePickerPlaceholder}>
-                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum ausw?hlen'}
+                    {announcementDateObj ? `${pad(announcementDateObj.getDate())}.${pad(announcementDateObj.getMonth() + 1)}.${announcementDateObj.getFullYear()}` : 'Datum auswählen'}
                   </Text>
                 </TouchableOpacity>
                 {showAnnouncementDatePicker && Platform.OS === 'ios' && (

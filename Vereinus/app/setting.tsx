@@ -339,13 +339,13 @@ export default function Setting() {
                 <View style={{ flexDirection: 'row', marginBottom: 8 }}>
                   {(['teacher', 'student'] as const).map(r => (
                     <TouchableOpacity key={r} onPress={() => setInviteRole(r)} style={[styles.badge, inviteRole === r && styles.badgeActive, { marginRight: 8, borderColor: '#2A3E48' }]}>
-                      <Text style={[styles.badgeText, inviteRole === r && styles.badgeTextActive, { color: inviteRole === r ? '#fff' : '#E5F4EF' }]}>{r === 'teacher' ? 'Lehrer' : 'Schueler'}</Text>
+                      <Text style={[styles.badgeText, inviteRole === r && styles.badgeTextActive, { color: inviteRole === r ? '#fff' : '#E5F4EF' }]}>{r === 'teacher' ? 'Lehrer' : 'Schüler'}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
-                {/* Gueltigkeit */}
-                <Text style={[styles.label, { color: '#C7D2D6' }]}>Gueltigkeit (max. 2 Tage)</Text>
+                {/* Gültigkeit */}
+                <Text style={[styles.label, { color: '#C7D2D6' }]}>Gültigkeit (max. 2 Tage)</Text>
                 <TextInput style={[styles.input, { color: '#E5F4EF', borderColor: '#2A3E48', backgroundColor: '#0F2530' }]} keyboardType='number-pad' placeholder='1-2' placeholderTextColor={'#C7D2D6'} value={inviteDays} onChangeText={setInviteDays} />
 
                 {!!generatedCode && (

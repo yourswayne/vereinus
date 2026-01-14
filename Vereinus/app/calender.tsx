@@ -188,6 +188,7 @@ export default function Calender() {
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [roleByOrg, setRoleByOrg] = useState<Record<string, OrgRole>>({});
+  const [taskListIds, setTaskListIds] = useState<string[]>([]);
   const directorOrgs = useMemo(() => orgs.filter((org) => roleByOrg[org.id] === 'director'), [orgs, roleByOrg]);
   const canUseOrgScope = directorOrgs.length > 0;
   const [eventDetail, setEventDetail] = useState<CalendarEvent | null>(null);
@@ -279,6 +280,7 @@ export default function Calender() {
     };
 
     if (supabaseUsingFallback || !sessionUserId) {
+      setTaskListIds([]);
       try {
         await loadFromStorage();
       } catch {
@@ -295,14 +297,21 @@ export default function Calender() {
         .eq('kind', 'user');
       const listRows = (listRes as any)?.data ?? [];
       const listIds = listRows.map((row: any) => row.id).filter(Boolean);
-      if (!listIds.length) {
+      const nextListIds = Array.from(new Set(listIds as string[])).sort();
+      setTaskListIds((prev) => {
+        if (prev.length === nextListIds.length && prev.every((id, index) => id === nextListIds[index])) {
+          return prev;
+        }
+        return nextListIds;
+      });
+      if (!nextListIds.length) {
         setTaskEvents([]);
         return;
       }
       const taskRes = await supabase
         .from('tasks')
         .select('id, list_id, title, description, start_at, due_at, done')
-        .in('list_id', listIds);
+        .in('list_id', nextListIds);
       const taskRows = (taskRes as any)?.data ?? [];
       const next: CalendarEvent[] = [];
       taskRows.forEach((row: any) => {
@@ -327,6 +336,7 @@ export default function Calender() {
       });
       setTaskEvents(next);
     } catch {
+      setTaskListIds([]);
       try {
         await loadFromStorage();
       } catch {
@@ -437,42 +447,52 @@ export default function Calender() {
     }
   }, [ASSIGNMENTS_STORAGE_KEY, orgs, roleByOrg, sessionUserId, supabaseUsingFallback]);
 
+  const refreshOrgAccess = useCallback(async (userIdOverride?: string | null) => {
+    const userId = userIdOverride ?? sessionUserId;
+    if (!userId) {
+      setOrgs([]);
+      setRoleByOrg({});
+      return;
+    }
+    const { data: memberships } = await supabase
+      .from('organisation_members')
+      .select('org_id, role')
+      .eq('user_id', userId);
+    const mems = (memberships ?? []) as { org_id: string; role: OrgRole }[];
+    const roleMap: Record<string, OrgRole> = {};
+    mems.forEach((mem) => {
+      roleMap[mem.org_id] = mem.role;
+    });
+    setRoleByOrg(roleMap);
+    if (!mems.length) {
+      setOrgs([]);
+      return;
+    }
+    const orgIds = mems.map((m) => m.org_id);
+    const { data: orgRows } = await supabase.from('organisations').select('id, name').in('id', orgIds);
+    setOrgs((orgRows ?? []) as { id: string; name: string }[]);
+  }, [sessionUserId]);
+
   useEffect(() => {
     let alive = true;
+    const applySession = async (userId: string | null) => {
+      if (!alive) return;
+      setSessionUserId(userId);
+      await refreshOrgAccess(userId);
+    };
     (async () => {
       const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user?.id;
-      setSessionUserId(userId ?? null);
-      if (!userId) {
-        if (!alive) return;
-        setOrgs([]);
-        setRoleByOrg({});
-        return;
-      }
-      const { data: memberships } = await supabase
-        .from('organisation_members')
-        .select('org_id, role')
-        .eq('user_id', userId);
-      if (!alive) return;
-      const mems = (memberships ?? []) as { org_id: string; role: OrgRole }[];
-      const roleMap: Record<string, OrgRole> = {};
-      mems.forEach((mem) => {
-        roleMap[mem.org_id] = mem.role;
-      });
-      setRoleByOrg(roleMap);
-      if (!mems.length) {
-        setOrgs([]);
-        return;
-      }
-      const orgIds = mems.map((m) => m.org_id);
-      const { data: orgRows } = await supabase.from('organisations').select('id, name').in('id', orgIds);
-      if (!alive) return;
-      setOrgs((orgRows ?? []) as { id: string; name: string }[]);
+      const userId = sessionData.session?.user?.id ?? null;
+      await applySession(userId);
     })();
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event: any, _session: any) => {
+      applySession(_session?.user?.id ?? null);
+    });
     return () => {
       alive = false;
+      authListener?.subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshOrgAccess]);
 
   const refreshRemoteEvents = useCallback(async () => {
     if (!orgs.length) {
@@ -561,7 +581,105 @@ export default function Calender() {
   );
 
   useEffect(() => {
-    if (!orgs.length) return undefined;
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`personal-events-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_calendar_events', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshPersonalEvents();
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshPersonalEvents, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`org-members-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'organisation_members', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshOrgAccess(sessionUserId);
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshOrgAccess, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`tasklists-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'task_lists', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshTasklistEvents();
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshTasklistEvents, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !taskListIds.length) return undefined;
+    const channels = taskListIds.map((listId) =>
+      supabase
+        .channel(`tasks-${listId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `list_id=eq.${listId}` }, () => {
+          refreshTasklistEvents();
+        })
+        .subscribe(),
+    );
+    return () => {
+      channels.forEach((channel) => channel.unsubscribe());
+    };
+  }, [refreshTasklistEvents, supabaseUsingFallback, taskListIds]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !sessionUserId) return undefined;
+    const channel = supabase
+      .channel(`group-members-${sessionUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'group_members', filter: `user_id=eq.${sessionUserId}` },
+        () => {
+          refreshAssignmentEvents();
+        },
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [refreshAssignmentEvents, sessionUserId, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !orgs.length) return undefined;
+    const channels = orgs.map((org) =>
+      supabase
+        .channel(`assignments-${org.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments', filter: `org_id=eq.${org.id}` }, () => {
+          refreshAssignmentEvents();
+        })
+        .subscribe(),
+    );
+    return () => {
+      channels.forEach((channel) => channel.unsubscribe());
+    };
+  }, [orgs, refreshAssignmentEvents, supabaseUsingFallback]);
+
+  useEffect(() => {
+    if (supabaseUsingFallback || !orgs.length) return undefined;
     const orgSet = new Set(orgs.map((org) => org.id));
     if (!orgSet.size) return undefined;
     const channel = supabase
@@ -580,7 +698,7 @@ export default function Calender() {
     return () => {
       channel.unsubscribe();
     };
-  }, [orgs, refreshRemoteEvents]);
+  }, [orgs, refreshRemoteEvents, supabaseUsingFallback]);
 
   const panResponder = useMemo(
     () =>
